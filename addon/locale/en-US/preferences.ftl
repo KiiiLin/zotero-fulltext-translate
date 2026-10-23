@@ -136,3 +136,6 @@ pref-about-version =
 
 pref-advanced-stripEmptyLines =
     .label = Strip empty lines and thinking from translation results
+
+pref-fulltext-shortcut = Paragraph translation shortcut
+pref-fulltext-hint = Open Paragraph translations in the PDF toolbar, hover a paragraph or caption, then press the shortcut. Formats include Alt+T and Ctrl+Shift+T. Full-text translation uses your sentence service, saves each paragraph, and resumes from disk. Closing the reader pauses the job.

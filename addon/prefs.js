@@ -1,4 +1,7 @@
 pref("__prefsPrefix__.enableAuto", true);
+pref("__prefsPrefix__.fulltext.shortcut", "Alt+T");
+pref("__prefsPrefix__.fulltext.delay", 1000);
+pref("__prefsPrefix__.fulltext.chunkSize", 3000);
 pref("__prefsPrefix__.enableDict", true);
 pref("__prefsPrefix__.attachPaperContext", false);
 pref("__prefsPrefix__.enablePopup", true);

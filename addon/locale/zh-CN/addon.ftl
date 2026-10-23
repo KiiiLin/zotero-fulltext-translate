@@ -206,3 +206,42 @@ service-nllb-dialog-apistream=nllb-api 流式输出
 service-nllb-dialog-serveendpoint=nllb-serve 接口
 service-nllb-dialog-apilabel=nllb-api 文档
 service-nllb-dialog-servelabel=nllb-serve 文档
+
+fulltext-title = 段落译文
+fulltext-translate = 翻译全文／继续
+fulltext-pause = 暂停
+fulltext-collapse = 收起全部
+fulltext-close = 关闭
+fulltext-pin = 固定
+fulltext-unpin = 取消固定
+fulltext-retry = 重试
+fulltext-waiting = 正在翻译…
+fulltext-pausing = 正在保存当前段落…
+fulltext-locate = 定位原文
+fulltext-paragraph = 段落
+fulltext-caption = 题注
+fulltext-page = 页
+fulltext-saved = 已保存为可同步笔记
+fulltext-progress = 已保存 { $done } / { $total } 段
+fulltext-hint = 打开已保存的段落译文。鼠标指向段落后按 Alt+T，或点击段落旁的译文按钮。
+fulltext-configure = 请先在翻译设置中选择正文翻译服务和目标语言。
+fulltext-pdf-only = 段落译文目前支持 PDF 附件。
+fulltext-unsupported = 此功能需要支持 SDT 的 Zotero 10.0.6 或更新版本。
+fulltext-unavailable = 无法提取论文结构。请确认 PDF 已下载且未加密，也可先打开一次阅读模式后重试。
+fulltext-no-text = 未找到带位置的正文段落。扫描页面可能需要 OCR；参考文献和页眉不参与翻译。
+fulltext-cache-error = 已保存的翻译文件无法读取或格式不兼容，文件已保留。可先备份并移走此文件，再重新翻译：
+fulltext-failed = 翻译失败。已完成的段落仍然保留，可以重试继续。
+
+fulltext-loading = 正在识别段落…
+fulltext-loading-hint = 正在读取论文结构，请稍候。
+fulltext-extract-progress = 正在识别论文结构：{ $percent }%
+fulltext-ready = 已就绪，请在 PDF 上方点击「翻译全文／继续」。
+
+fulltext-state-untranslated = 未翻译：请在文献列表右键选择「全文段落翻译／继续」。
+fulltext-state-disabled = 已翻译，未启用段落译文。点击启用。
+fulltext-state-enabled = 已启用段落译文。鼠标指向段落后按 Alt+T；点击关闭。
+fulltext-menu-hint = 请在文献列表右键点击论文或 PDF，选择「全文段落翻译／继续」。
+fulltext-not-yet = 此段尚未翻译，请在文献列表右键菜单继续全文翻译。
+
+fulltext-drag = 拖动标题栏移动译文框
+fulltext-resize = 拖动边框或四角调整宽高

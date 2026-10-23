@@ -8,6 +8,9 @@ declare namespace _ZoteroTypes {
   interface Prefs {
     PluginPrefsMap: {
       "enableAuto": boolean;
+      "fulltext.shortcut": string;
+      "fulltext.delay": number;
+      "fulltext.chunkSize": number;
       "enableDict": boolean;
       "attachPaperContext": boolean;
       "enablePopup": boolean;

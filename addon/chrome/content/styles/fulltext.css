@@ -1,0 +1,223 @@
+.paragraph-translations {
+  position: fixed;
+  inset: 0;
+  z-index: 10000;
+  pointer-events: none;
+  font:
+    13px/1.6 system-ui,
+    sans-serif;
+  color: #17212b;
+}
+.paragraph-translations [hidden] {
+  display: none !important;
+}
+.paragraph-translations button {
+  pointer-events: auto;
+  cursor: pointer;
+  border: 1px solid #a8b4be;
+  border-radius: 5px;
+  padding: 3px 7px;
+  background: #f7fafc;
+  color: #17212b;
+  font: inherit;
+}
+.paragraph-translations button:focus-visible {
+  outline: 2px solid #2476d4;
+  outline-offset: 2px;
+}
+.paragraph-translations button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.paragraph-translations .pt-card {
+  position: fixed;
+  pointer-events: auto;
+  box-sizing: border-box;
+  border: 1px solid #8eacc6;
+  border-radius: 8px;
+  background: #fff;
+  box-shadow: 0 4px 22px #0003;
+  display: flex;
+  flex-direction: column;
+  min-width: min(240px, calc(100vw - 16px));
+  min-height: min(100px, calc(100vh - 16px));
+  max-width: calc(100vw - 16px);
+  max-height: calc(100vh - 16px);
+  border-color: var(--pt-accent, #8eacc6);
+  overflow: visible;
+  user-select: text;
+}
+.paragraph-translations .pt-card-header {
+  display: flex;
+  gap: 5px;
+  align-items: center;
+  flex: 0 0 auto;
+  padding: 8px 10px;
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+  border-bottom: 1px solid #e0e7ed;
+}
+.paragraph-translations .pt-card-header strong {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+}
+.paragraph-translations .pt-card-header button {
+  font-size: 11px;
+  flex-shrink: 0;
+}
+.paragraph-translations .pt-card-body {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  padding: 8px 0;
+  font-size: 14px;
+}
+.paragraph-translations details {
+  font-size: 11px;
+  color: #596b7a;
+  border-top: 1px solid #e0e7ed;
+  padding-top: 5px;
+}
+.paragraph-translations details p {
+  white-space: pre-wrap;
+}
+.paragraph-translations summary {
+  cursor: pointer;
+  overflow-wrap: anywhere;
+}
+.paragraph-translations .pt-dock {
+  display: contents;
+}
+.paragraph-translations .pt-card-content {
+  min-height: 0;
+  overflow: auto;
+  padding: 0 10px 12px;
+}
+.paragraph-translations .pt-guides {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  pointer-events: none;
+  z-index: 0;
+}
+.paragraph-translations .pt-guides * {
+  pointer-events: none;
+}
+.paragraph-translations .pt-source-range {
+  stroke: currentColor;
+  stroke-width: 3;
+  stroke-linecap: round;
+  fill: none;
+}
+.paragraph-translations .pt-connector {
+  stroke: currentColor;
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  fill: none;
+  opacity: 0.85;
+}
+.paragraph-translations .pt-source-dot {
+  fill: currentColor;
+}
+.paragraph-translations.pt-interacting * {
+  user-select: none !important;
+}
+.paragraph-translations .pt-resize-handle {
+  position: absolute;
+  touch-action: none;
+  pointer-events: auto;
+  z-index: 2;
+}
+.paragraph-translations .pt-resize-n {
+  top: -4px;
+  left: 10px;
+  right: 10px;
+  height: 8px;
+  cursor: ns-resize;
+}
+.paragraph-translations .pt-resize-s {
+  bottom: -4px;
+  left: 10px;
+  right: 10px;
+  height: 8px;
+  cursor: ns-resize;
+}
+.paragraph-translations .pt-resize-e {
+  right: -4px;
+  top: 10px;
+  bottom: 10px;
+  width: 8px;
+  cursor: ew-resize;
+}
+.paragraph-translations .pt-resize-w {
+  left: -4px;
+  top: 10px;
+  bottom: 10px;
+  width: 8px;
+  cursor: ew-resize;
+}
+.paragraph-translations .pt-resize-ne,
+.paragraph-translations .pt-resize-nw,
+.paragraph-translations .pt-resize-se,
+.paragraph-translations .pt-resize-sw {
+  width: 14px;
+  height: 14px;
+}
+.paragraph-translations .pt-resize-ne {
+  top: -4px;
+  right: -4px;
+  cursor: nesw-resize;
+}
+.paragraph-translations .pt-resize-nw {
+  top: -4px;
+  left: -4px;
+  cursor: nwse-resize;
+}
+.paragraph-translations .pt-resize-se {
+  bottom: -4px;
+  right: -4px;
+  cursor: nwse-resize;
+}
+.paragraph-translations .pt-resize-sw {
+  bottom: -4px;
+  left: -4px;
+  cursor: nesw-resize;
+}
+.paragraph-translations .pt-resize-se::after {
+  content: "";
+  position: absolute;
+  inset: 3px 4px 4px 3px;
+  border-right: 2px solid var(--pt-accent, #2476d4);
+  border-bottom: 2px solid var(--pt-accent, #2476d4);
+  border-radius: 0 0 3px 0;
+  opacity: 0.7;
+}
+.paragraph-translations .pt-error {
+  color: #b32f2f;
+}
+@media (prefers-color-scheme: dark) {
+  .paragraph-translations {
+    color: #e4eaf0;
+  }
+  .paragraph-translations .pt-card {
+    background: #242c34;
+    border-color: var(--pt-accent, #57738e);
+  }
+  .paragraph-translations button {
+    background: #344454;
+    color: #e4eaf0;
+    border-color: #6d879f;
+  }
+  .paragraph-translations details {
+    color: #a7b7c7;
+  }
+  .paragraph-translations .pt-error {
+    color: #ffabab;
+  }
+}

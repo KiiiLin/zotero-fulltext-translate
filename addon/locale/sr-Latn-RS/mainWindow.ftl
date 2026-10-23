@@ -13,3 +13,8 @@ itemmenu-translateTitle =
 itemmenu-translateAbstract =
     .label = Prevedi sažetak
 
+
+itemmenu-translateFullText =
+    .label = Translate Full Paper / Resume
+itemmenu-pauseFullText =
+    .label = Pause Full-Paper Translation

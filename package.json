@@ -1,9 +1,9 @@
 {
-  "name": "zotero-pdf-translate",
-  "version": "2.4.8",
-  "description": "Translate PDF, EPub, webpage, metadata, annotations, notes to the target language. Support 20+ translate services.",
+  "name": "zotero-fulltext-translate",
+  "version": "2.4.9",
+  "description": "Full-paper translation for Zotero with synced paragraph translations, movable and resizable cards, and source-linked reading.",
   "config": {
-    "addonName": "Translate for Zotero",
+    "addonName": "Zotero Full-Text Translate",
     "addonID": "zoteropdftranslate@euclpts.com",
     "addonRef": "zoteropdftranslate",
     "prefsPrefix": "extensions.zotero.ZoteroPDFTranslate",
@@ -16,18 +16,21 @@
     "release": "zotero-plugin release",
     "lint": "prettier --write . && eslint . --fix",
     "test": "zotero-plugin test",
-    "update-deps": "npm update --save"
+    "test:fulltext": "node scripts/test-fulltext.cjs",
+    "test:fulltext:zotero": "node scripts/test-fulltext-zotero.cjs",
+    "update-deps": "npm update --save",
+    "release:prepare": "node scripts/prepare-release.cjs"
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/windingwind/zotero-pdf-translate.git"
+    "url": "git+https://github.com/KiiiLin/zotero-fulltext-translate.git"
   },
-  "author": "windingwind",
+  "author": "windingwind and KiiiLin",
   "license": "AGPL-3.0-or-later",
   "bugs": {
-    "url": "https://github.com/windingwind/zotero-pdf-translate/issues"
+    "url": "https://github.com/KiiiLin/zotero-fulltext-translate/issues"
   },
-  "homepage": "https://github.com/windingwind/zotero-pdf-translate#readme",
+  "homepage": "https://github.com/KiiiLin/zotero-fulltext-translate#readme",
   "dependencies": {
     "franc": "^6.2.0",
     "iso639-js": "^1.1.3",

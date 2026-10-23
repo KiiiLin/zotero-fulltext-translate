@@ -2,52 +2,44 @@ name: Release
 
 on:
   push:
-    tags:
-      - v**
+    tags: ["v*"]
+  workflow_dispatch:
 
 permissions:
   contents: write
-  issues: write
-  pull-requests: write
 
 jobs:
   release:
     runs-on: ubuntu-latest
-    env:
-      GITHUB_TOKEN: ${{ secrets.GitHub_TOKEN }}
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+      - uses: actions/setup-node@v4
         with:
-          node-version: 20
-
-      - name: Install deps
-        run: npm install -f
-
-      - name: Build
+          node-version: "22"
+          cache: npm
+      - run: npm ci
+      - run: npm run test:fulltext
+      - run: npm run build
+      - run: npm run release:prepare
+      - name: Publish installation package and update manifest
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
         run: |
-          npm run build
-
-      - name: Release to GitHub
-        run: |
-          npm run release
-          # cp build/update.json update.json
-          # cp build/update-beta.json update-beta.json
-          # git add update.json
-          # git add update-beta.json
-          # git commit -m 'chore(publish): synchronizing `update.json`'
-          # git push
-          sleep 1s
-
-      - name: Notify release
-        uses: apexskier/github-release-commenter@v1
-        continue-on-error: true
-        with:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          comment-template: |
-            :rocket: _This ticket has been resolved in {release_tag}. See {release_link} for release notes._
+          version=$(node -p 'require("./package.json").version')
+          tag="v${version}"
+          if [[ "$GITHUB_REF_TYPE" == "tag" && "$GITHUB_REF_NAME" != "$tag" ]]; then
+            echo "Tag does not match package.json version" >&2
+            exit 1
+          fi
+          if gh release view "$tag" >/dev/null 2>&1; then
+            echo "Release $tag already exists; keeping its published assets."
+            exit 0
+          fi
+          gh release create "$tag" build/release/* \
+            --target "$GITHUB_SHA" \
+            --title "Zotero Full-Text Translate ${version}" \
+            --notes-file RELEASE_NOTES.md \
+            --latest

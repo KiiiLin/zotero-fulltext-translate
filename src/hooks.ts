@@ -26,6 +26,10 @@ import { registerExtraColumns } from "./modules/itemTree";
 import { registerShortcuts } from "./modules/shortcuts";
 import { registerItemPaneInfoRows } from "./modules/infoBox";
 import { registerCustomFields } from "./modules/fields";
+import {
+  registerFullTextTranslation,
+  unregisterFullTextTranslation,
+} from "./modules/fulltext";
 
 async function onStartup() {
   await Promise.all([
@@ -48,6 +52,8 @@ async function onStartup() {
   registerCustomFields();
 
   registerReaderInitializer();
+
+  registerFullTextTranslation();
 
   registerShortcuts();
 
@@ -110,6 +116,8 @@ async function onMainWindowUnload(win: Window): Promise<void> {
 }
 
 function onShutdown(): void {
+  unregisterFullTextTranslation();
+  Zotero.MenuManager.unregisterMenu(`${config.addonRef}-translate-title`);
   ztoolkit.unregisterAll();
   Zotero.getMainWindows().forEach((win) => {
     onMainWindowUnload(win);

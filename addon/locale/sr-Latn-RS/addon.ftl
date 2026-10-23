@@ -168,3 +168,42 @@ service-nllb-dialog-serveendpoint = nllb-serve adresa servisa
 service-nllb-dialog-apilabel = nllb-api dokumentacija
 service-nllb-dialog-servelabel = nllb-serve dokumentacija
 
+
+fulltext-title = Paragraph translations
+fulltext-translate = Translate full text / Resume
+fulltext-pause = Pause
+fulltext-collapse = Collapse all
+fulltext-close = Close
+fulltext-pin = Pin
+fulltext-unpin = Unpin
+fulltext-retry = Retry
+fulltext-waiting = Translating…
+fulltext-pausing = Finishing current paragraph…
+fulltext-locate = Locate
+fulltext-paragraph = Paragraph
+fulltext-caption = Caption
+fulltext-page = Page
+fulltext-saved = Saved as a synced note
+fulltext-progress = { $done } / { $total } paragraphs saved
+fulltext-hint = Open saved paragraph translations. Hover a paragraph and press Alt+T, or click its translation marker.
+fulltext-configure = Select a sentence translation service and target language in Translate settings first.
+fulltext-pdf-only = Paragraph translations are available for PDF attachments.
+fulltext-unsupported = This feature requires Zotero 10.0.6 or later with SDT support.
+fulltext-unavailable = Could not extract the document structure. Try opening Reading Mode first, and check that the PDF is available locally and unlocked.
+fulltext-no-text = No anchored text paragraphs were found. Scanned pages may require OCR; references and page headers are excluded.
+fulltext-cache-error = The saved translation file is unreadable or incompatible. It has been preserved. Move it aside to start a new translation:
+fulltext-failed = Translation failed. Completed paragraphs remain saved; retry to resume.
+
+fulltext-loading = Identifying paragraphs…
+fulltext-loading-hint = Reading document structure. Please wait.
+fulltext-extract-progress = Extracting document structure: { $percent }%
+fulltext-ready = Ready. Click Translate full text / Resume above the PDF.
+
+fulltext-state-untranslated = Not translated. Use Translate Full Paper / Resume in the library context menu.
+fulltext-state-disabled = Translated; paragraph display is off. Click to enable.
+fulltext-state-enabled = Paragraph display is on. Point at a paragraph and press Alt+T; click to disable.
+fulltext-menu-hint = Right-click the paper or PDF in the library and choose Translate Full Paper / Resume.
+fulltext-not-yet = This paragraph is not translated yet. Resume full-paper translation from the library context menu.
+
+fulltext-drag = Drag the title bar to move this translation
+fulltext-resize = Drag an edge or corner to resize this translation

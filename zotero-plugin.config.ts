@@ -1,16 +1,15 @@
 import { defineConfig } from "zotero-plugin-scaffold";
 import pkg from "./package.json";
-import { copyFileSync } from "fs";
 
 export default defineConfig({
   source: ["src", "addon"],
   dist: "build",
   name: pkg.config.addonName,
+  xpiName: pkg.name,
   id: pkg.config.addonID,
   namespace: pkg.config.addonRef,
-  updateURL: `https://github.com/{{owner}}/{{repo}}/releases/download/release/${
-    pkg.version.includes("-") ? "update-beta.json" : "update.json"
-  }`,
+  updateURL:
+    "https://github.com/KiiiLin/zotero-fulltext-translate/releases/latest/download/update.json",
   xpiDownloadLink:
     "https://github.com/{{owner}}/{{repo}}/releases/download/v{{version}}/{{xpiName}}.xpi",
 
@@ -31,6 +30,8 @@ export default defineConfig({
   },
 
   build: {
+    // Keep the explicit fork manifest: Zotero requires a nonempty update_url.
+    makeManifest: { enable: false },
     assets: ["addon/**/*.*"],
     define: {
       ...pkg.config,
@@ -39,6 +40,8 @@ export default defineConfig({
       homepage: pkg.homepage,
       buildVersion: pkg.version,
       buildTime: "{{buildTime}}",
+      updateURL:
+        "https://github.com/KiiiLin/zotero-fulltext-translate/releases/latest/download/update.json",
     },
     esbuildOptions: [
       {
@@ -50,6 +53,7 @@ export default defineConfig({
           __env__: `"${process.env.NODE_ENV}"`,
         },
         bundle: true,
+        loader: { ".css": "text" },
         target: "firefox115",
         outdir: "build/addon/chrome/content/scripts",
       },

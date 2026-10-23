@@ -8,6 +8,7 @@ on:
 
 jobs:
   close-issues:
+    if: github.repository == 'windingwind/zotero-pdf-translate'
     runs-on: ubuntu-latest
     permissions:
       issues: write
@@ -26,7 +27,7 @@ jobs:
           repo-token: ${{ secrets.GITHUB_TOKEN }}
   issue-invalid:
     name: close invalid issue
-    if: github.event.label.name == 'invalid'
+    if: github.repository == 'windingwind/zotero-pdf-translate' && github.event.label.name == 'invalid'
     runs-on: ubuntu-latest
     permissions:
       issues: write
@@ -42,7 +43,7 @@ jobs:
             --comment "Hello @${{ github.event.issue.user.login }}. This issue is marked as \`invalid\` and closed. Please make sure you are reporting an issue and following the issue template."
   issue-duplicate:
     name: close duplicate issue
-    if: github.event.label.name == 'duplicate'
+    if: github.repository == 'windingwind/zotero-pdf-translate' && github.event.label.name == 'duplicate'
     runs-on: ubuntu-latest
     permissions:
       issues: write

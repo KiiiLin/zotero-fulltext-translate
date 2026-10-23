@@ -7,6 +7,15 @@
 >
   <groupbox>
     <label><html:h2 data-l10n-id="pref-general"></html:h2></label>
+    <hbox align="center">
+      <label data-l10n-id="pref-fulltext-shortcut"></label>
+      <html:input
+        type="text"
+        preference="__prefsPrefix__.fulltext.shortcut"
+        placeholder="Alt+T"
+      />
+    </hbox>
+    <html:p data-l10n-id="pref-fulltext-hint"></html:p>
     <checkbox
       id="__addonRef__-enableAuto"
       data-l10n-id="pref-basic-enableAuto"

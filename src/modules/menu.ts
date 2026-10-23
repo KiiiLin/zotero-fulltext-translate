@@ -1,6 +1,12 @@
 import { config } from "../../package.json";
 import { getPref } from "../utils/prefs";
 import {
+  canTranslateFullText,
+  hasFullTextJob,
+  pauseFullTextTranslation,
+  startFullTextTranslation,
+} from "./fulltext";
+import {
   addTranslateAbstractTask,
   addTranslateTitleTask,
   TranslateTask,
@@ -14,6 +20,36 @@ export function registerMenu() {
     pluginID: config.addonID,
     target: "main/library/item",
     menus: [
+      {
+        menuType: "menuitem",
+        l10nID: `${config.addonRef}-itemmenu-translateFullText`,
+        icon: menuIcon,
+        onCommand: (_event, context) => {
+          if (context.items?.length === 1)
+            void startFullTextTranslation(context.items[0]);
+        },
+        onShowing: (_event, context) => {
+          const item =
+            context.items?.length === 1 ? context.items[0] : undefined;
+          context.setVisible(!!item && canTranslateFullText(item));
+          context.setEnabled(
+            !!item && item.isEditable() && !hasFullTextJob(item),
+          );
+        },
+      },
+      {
+        menuType: "menuitem",
+        l10nID: `${config.addonRef}-itemmenu-pauseFullText`,
+        onCommand: (_event, context) => {
+          if (context.items?.length === 1)
+            void pauseFullTextTranslation(context.items[0]);
+        },
+        onShowing: (_event, context) => {
+          context.setVisible(
+            context.items?.length === 1 && hasFullTextJob(context.items[0]),
+          );
+        },
+      },
       {
         menuType: "menuitem",
         l10nID: `${config.addonRef}-itemmenu-translateTitle`,

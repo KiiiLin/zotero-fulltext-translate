@@ -137,3 +137,6 @@ pref-about-version =
 pref-advanced-stripEmptyLines =
     .label = 从翻译结果中删除空行和思考内容
 
+
+pref-fulltext-shortcut = 段落译文快捷键
+pref-fulltext-hint = 打开 PDF 工具栏的「段落译文」后，将鼠标指向段落或题注，按快捷键展开。支持 Alt+T、Ctrl+Shift+T 等格式。全文使用当前正文翻译服务，按段保存并可断点继续；关闭阅读器后暂停。

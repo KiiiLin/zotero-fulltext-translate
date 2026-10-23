@@ -14,3 +14,7 @@ itemmenu-translateTitle =
     .label = Traduci Titolo
 itemmenu-translateAbstract =
     .label = Traduci Abstract
+itemmenu-translateFullText =
+    .label = Translate Full Paper / Resume
+itemmenu-pauseFullText =
+    .label = Pause Full-Paper Translation
