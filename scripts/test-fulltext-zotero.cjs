@@ -45,7 +45,7 @@ async function run(phase) {
     "extensions.zoteroMacWordIntegration.skipInstallation": true,
     [`${config.prefsPrefix}.translateSource`]:
       phase === 1 ? "google" : "not-configured-on-recipient",
-    [`${config.prefsPrefix}.targetLanguage`]: "zh-CN",
+    [`${config.prefsPrefix}.targetLanguage`]: phase === 1 ? "zh" : "zh-CN",
     [`${config.prefsPrefix}.fulltext.delay`]: 250,
   };
   fs.writeFileSync(

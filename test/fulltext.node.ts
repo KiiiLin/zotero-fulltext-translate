@@ -169,6 +169,48 @@ test("sync recovery ignores other PDFs and incomplete pieces, and merges duplica
   );
 });
 
+test("sync recovery accepts equivalent Chinese language codes without mixing scripts", () => {
+  const expected = { ...blank(), sourceHash: "a".repeat(32) };
+  const entry = {
+    source: "A paragraph.",
+    result: "一个段落。",
+    service: "test",
+    updatedAt: "2026-10-23T00:00:00Z",
+  };
+  const note = {
+    header: {
+      attachmentKey: "ABCDEFGH",
+      sourceHash: expected.sourceHash,
+      targetLanguage: "zh",
+      settingsHash: "other-device-provider",
+      part: 0,
+    },
+    pieces: [{ ...entry, id: "0", index: 0, count: 1 }],
+  };
+  for (const targetLanguage of ["zh-CN", "zh_CN", "ZH-cn", "zh-Hans"]) {
+    const recipient = { ...expected, targetLanguage };
+    assert.deepEqual(
+      recoverNotes([note], recipient, "ABCDEFGH").blocks["0"],
+      entry,
+      `restore zh on ${targetLanguage}`,
+    );
+    assert.deepEqual(
+      mergeTranslations(recipient, {
+        ...expected,
+        targetLanguage: "zh",
+        blocks: { "0": entry },
+      }).blocks["0"],
+      entry,
+    );
+  }
+  for (const targetLanguage of ["zh-TW", "zh-Hant", "en-US"]) {
+    assert.deepEqual(
+      recoverNotes([note], { ...expected, targetLanguage }, "ABCDEFGH").blocks,
+      {},
+    );
+  }
+});
+
 test("SDT joins cross-page parts, keeps nested captions and excludes headers/references", () => {
   const blocks = extractParagraphs({
     schemaVersion: "1",

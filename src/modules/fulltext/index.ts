@@ -8,6 +8,7 @@ import {
   extractParagraphs,
   SDTDocument,
   TranslationFile,
+  sameTranslationLanguage,
   validateTranslationFile,
 } from "./model";
 import { SyncedTranslationStore, mergeTranslations } from "./sync";
@@ -140,7 +141,10 @@ async function localFiles(
     try {
       const file = (await IOUtils.readJSON(path)) as TranslationFile;
       if (
-        file.targetLanguage !== (expected?.targetLanguage || language()) ||
+        !sameTranslationLanguage(
+          file.targetLanguage,
+          expected?.targetLanguage || language(),
+        ) ||
         (expected && file.sourceHash !== expected.sourceHash)
       )
         continue;
@@ -168,7 +172,14 @@ async function getSession(
   if (!/^[a-f0-9]{32,64}$/i.test(sourceHash || ""))
     throw new Error(label("unavailable"));
   const key = `${item.libraryID}-${item.key}-${sourceHash}-${options.hash}`;
-  if (sessions.has(key)) return sessions.get(key)!;
+  if (sessions.has(key)) {
+    const session = await sessions.get(key)!;
+    // An empty session can predate incoming sync notes. Reload even when the
+    // reader has not attached to that session yet, without calling a provider.
+    const incoming = await session.store.load(session.job.file);
+    session.job.file = mergeTranslations(session.job.file, incoming);
+    return session;
+  }
   const loading = (async (): Promise<Session> => {
     const paragraphs = extractParagraphs(document);
     if (!paragraphs.length) throw new Error(label("no-text"));

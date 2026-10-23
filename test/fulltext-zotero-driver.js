@@ -28,7 +28,7 @@ async function startup() {
       Zotero.DataDirectory.dir === base + "/data-" + phase,
       "isolated data directory",
     );
-    let item, parent;
+    let item, parent, importSyncedNotes;
     if (phase === 1) {
       parent = new Zotero.Item("journalArticle");
       parent.setField("title", "Paragraph translation test paper");
@@ -66,17 +66,19 @@ async function startup() {
         ignoreExisting: true,
       });
       await IOUtils.copy(base + "/fixture.pdf", storage + "/fixture.pdf");
-      for (const data of exported.notes) {
-        const note = new Zotero.Item("note");
-        note.libraryID = Zotero.Libraries.userLibraryID;
-        note.key = data.key;
-        await note.loadPrimaryData();
-        note.parentID = parent.id;
-        note.setNote(data.note);
-        note.setTags(data.tags);
-        note.addRelatedItem(item);
-        await note.saveTx();
-      }
+      importSyncedNotes = async () => {
+        for (const data of exported.notes) {
+          const note = new Zotero.Item("note");
+          note.libraryID = Zotero.Libraries.userLibraryID;
+          note.key = data.key;
+          await note.loadPrimaryData();
+          note.parentID = parent.id;
+          note.setNote(data.note);
+          note.setTags(data.tags);
+          note.addRelatedItem(item);
+          await note.saveTx();
+        }
+      };
       check(
         item.id !== exported.attachmentID,
         "recipient uses different local item IDs",
@@ -570,19 +572,54 @@ async function startup() {
     } else {
       await wait(
         () =>
+          toolbar.dataset.translationState === "untranslated" &&
+          toolbar.getAttribute("aria-busy") === "false",
+        "recipient reader opened before sync notes arrive",
+      );
+      check(true, "recipient reader initially has no saved translations");
+      let recipientCalls = 0;
+      addon.api.translate = async () => {
+        recipientCalls++;
+        throw new Error("Unexpected provider request on recipient");
+      };
+      // A failed early attempt leaves a cached empty session. Incoming notes
+      // must replace that empty view without translating or reopening the PDF.
+      command(menu(parent), "translateFullText");
+      const enabledPref =
+        "extensions.zotero.ZoteroPDFTranslate.fulltext.enabled." +
+        item.libraryID +
+        "." +
+        item.key;
+      await wait(
+        () => Zotero.Prefs.get(enabledPref, true),
+        "empty session created",
+      );
+      await wait(() => {
+        const popup = menu(parent);
+        const entry = popup.querySelector(
+          '[data-l10n-id="zoteropdftranslate-itemmenu-translateFullText"]',
+        );
+        const finished = entry && !entry.disabled;
+        popup.remove();
+        return finished;
+      }, "unconfigured provider attempt finishes");
+      check(
+        recipientCalls === 1,
+        "failed early provider call leaves a cached empty session",
+      );
+      recipientCalls = 0;
+      Zotero.Prefs.set(enabledPref, false, true);
+      await importSyncedNotes();
+      await wait(
+        () =>
           toolbar.dataset.translationState === "disabled" &&
           toolbar.getAttribute("aria-busy") === "false",
         "synced but disabled state",
       );
       check(
         true,
-        "synced translations discovered with no local cache and a different provider setting",
+        "incoming zh notes refresh the open zh-CN reader with no cache or provider",
       );
-      let recipientCalls = 0;
-      addon.api.translate = async () => {
-        recipientCalls++;
-        throw new Error("Unexpected provider request on recipient");
-      };
       // Reading saved translations must work without a valid provider or credentials.
       toolbar.click();
       await wait(
@@ -595,6 +632,10 @@ async function startup() {
       check(
         card.querySelector(".pt-card-body").textContent.includes("测试译文"),
         "fresh recipient profile restores saved paragraph translation from synced notes",
+      );
+      check(
+        true,
+        "cached empty session reloads incoming translations without reopening PDF",
       );
       check(
         recipientCalls === 0 &&

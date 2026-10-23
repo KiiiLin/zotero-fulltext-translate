@@ -35,6 +35,20 @@ export interface TranslationFile {
   blocks: Record<string, SavedTranslation>;
 }
 
+/** Match provider/UI locale aliases while keeping simplified and traditional distinct. */
+export function sameTranslationLanguage(left: string, right: string): boolean {
+  const normalize = (value: string) => {
+    const code = value.trim().replace(/_/g, "-").toLowerCase();
+    if (/^zh(?:-(?:cn|sg|chs))?$/.test(code) || /^zh-hans(?:-|$)/.test(code))
+      return "zh-hans";
+    if (/^zh-(?:tw|hk|mo|cht)$/.test(code) || /^zh-hant(?:-|$)/.test(code))
+      return "zh-hant";
+    return code;
+  };
+  const code = normalize(left);
+  return !!code && code === normalize(right);
+}
+
 export function isPageRect(rect: unknown): rect is PageRect {
   return (
     Array.isArray(rect) &&

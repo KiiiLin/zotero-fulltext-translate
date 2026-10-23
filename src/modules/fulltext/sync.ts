@@ -1,6 +1,7 @@
 import {
   SavedTranslation,
   TranslationFile,
+  sameTranslationLanguage,
   validateTranslationFile,
 } from "./model";
 
@@ -167,7 +168,7 @@ export function mergeTranslations(
 ): TranslationFile {
   if (
     base.sourceHash !== incoming.sourceHash ||
-    base.targetLanguage !== incoming.targetLanguage
+    !sameTranslationLanguage(base.targetLanguage, incoming.targetLanguage)
   )
     return base;
   const blocks = { ...base.blocks };
@@ -192,7 +193,7 @@ export function recoverNotes(
     if (
       header.attachmentKey !== attachmentKey ||
       header.sourceHash !== expected.sourceHash ||
-      header.targetLanguage !== expected.targetLanguage
+      !sameTranslationLanguage(header.targetLanguage, expected.targetLanguage)
     )
       continue;
     for (const piece of pieces) {
@@ -268,7 +269,8 @@ export class SyncedTranslationStore {
   async has(targetLanguage: string) {
     return (await this.notes()).some(
       (n) =>
-        n.data.header.targetLanguage === targetLanguage && n.data.pieces.length,
+        sameTranslationLanguage(n.data.header.targetLanguage, targetLanguage) &&
+        n.data.pieces.length,
     );
   }
 
@@ -298,7 +300,10 @@ export class SyncedTranslationStore {
         .filter(
           (n) =>
             n.data.header.sourceHash === file.sourceHash &&
-            n.data.header.targetLanguage === file.targetLanguage,
+            sameTranslationLanguage(
+              n.data.header.targetLanguage,
+              file.targetLanguage,
+            ),
         )
         .sort((a, b) => a.item.key.localeCompare(b.item.key));
       for (const [part, text] of html.entries()) {

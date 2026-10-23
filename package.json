@@ -1,6 +1,6 @@
 {
   "name": "zotero-fulltext-translate",
-  "version": "2.4.9",
+  "version": "2.4.10",
   "description": "Full-paper translation for Zotero with synced paragraph translations, movable and resizable cards, and source-linked reading.",
   "config": {
     "addonName": "Zotero Full-Text Translate",
