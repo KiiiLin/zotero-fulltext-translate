@@ -245,3 +245,14 @@ fulltext-not-yet = This paragraph is not translated yet. Resume full-paper trans
 
 fulltext-drag = Drag the title bar to move this translation
 fulltext-resize = Drag an edge or corner to resize this translation
+
+fulltext-column = Full-text
+fulltext-task-checking = Checking saved translations…
+fulltext-task-translating = Translating
+fulltext-task-pausing = Pausing
+fulltext-task-paused = Paused
+fulltext-task-failed = Failed
+fulltext-task-complete = Complete
+fulltext-already-translated = All paragraphs are already translated. Saved translations are enabled.
+fulltext-resuming = Resuming saved translation: { $done } / { $total } paragraphs.
+fulltext-starting = Starting translation: 0 / { $total } paragraphs.

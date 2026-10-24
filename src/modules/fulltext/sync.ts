@@ -267,16 +267,52 @@ export class SyncedTranslationStore {
   }
 
   async has(targetLanguage: string) {
-    return (await this.notes()).some(
+    const notes = await this.notes();
+    await this.standardizeTitles(notes);
+    return notes.some(
       (n) =>
         sameTranslationLanguage(n.data.header.targetLanguage, targetLanguage) &&
         n.data.pieces.length,
     );
   }
 
+  private async standardizeTitles(
+    notes: { item: Zotero.Item; data: NoteData }[],
+  ) {
+    if (!this.item.isEditable()) return;
+    const titleFor = (data: NoteData) =>
+      `${this.title} · ${data.header.targetLanguage} · ${data.header.part + 1}`;
+    const linkIn = (doc: Document) =>
+      doc.querySelector<HTMLAnchorElement>(`a[href^="${NOTE_LINK}"]`);
+    if (
+      notes.every(
+        ({ item, data }) =>
+          linkIn(parse(item.getNote()))?.textContent === titleFor(data),
+      )
+    )
+      return;
+    await Zotero.DB.executeTransaction(async () => {
+      for (const { item } of notes) {
+        // Re-read within the transaction so a title change cannot overwrite a
+        // newer paragraph saved since the discovery scan. Preserve all links.
+        const html = item.getNote();
+        const data = decodeNote(html, parse);
+        if (!data || data.header.attachmentKey !== this.item.key) continue;
+        const doc = parse(html);
+        const link = linkIn(doc);
+        if (!link || link.textContent === titleFor(data)) continue;
+        link.textContent = titleFor(data);
+        item.setNote(doc.body.innerHTML);
+        await item.save();
+      }
+    });
+  }
+
   async load(expected: TranslationFile) {
+    const notes = await this.notes();
+    await this.standardizeTitles(notes);
     return recoverNotes(
-      (await this.notes()).map((n) => n.data),
+      notes.map((n) => n.data),
       expected,
       this.item.key,
     );

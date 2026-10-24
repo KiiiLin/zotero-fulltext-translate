@@ -6,6 +6,7 @@ import {
   validateTranslationFile,
   TranslationFile,
   Paragraph,
+  alignTranslations,
 } from "../src/modules/fulltext/model";
 import {
   ParagraphTranslationJob,
@@ -24,6 +25,7 @@ import {
   NOTE_BYTES,
   recoverNotes,
 } from "../src/modules/fulltext/sync";
+import { aggregateProgress } from "../src/modules/fulltext/progress";
 
 const rect = [0, 10, 20, 100, 80] as [number, number, number, number, number];
 const node = (text: string, extra = {}) => ({
@@ -209,6 +211,43 @@ test("sync recovery accepts equivalent Chinese language codes without mixing scr
       {},
     );
   }
+});
+
+test("saved translations survive moved paragraph IDs and platform whitespace, but not changed text", () => {
+  const file = {
+    ...blank(),
+    blocks: {
+      "9.1": {
+        source: "A scientific\r\n paragraph.",
+        result: "译文",
+        service: "test",
+        updatedAt: "2026-10-23T00:00:00Z",
+      },
+    },
+  };
+  const current = [
+    { ...paragraphs[0], text: "A scientific paragraph." },
+    { ...paragraphs[1], text: "A different paragraph." },
+  ];
+  const restored = alignTranslations(file, current);
+  assert.equal(restored.blocks["0"].result, "译文");
+  assert.equal(restored.blocks["0"].source, current[0].text);
+  assert.equal(restored.blocks["1"], undefined);
+});
+
+test("paper progress weights multiple PDFs and retains partial failures", () => {
+  assert.deepEqual(
+    aggregateProgress([
+      { done: 10, total: 10, state: "complete" },
+      { done: 2, total: 90, state: "translating" },
+    ]),
+    { done: 12, total: 100, state: "translating" },
+  );
+  assert.equal(
+    aggregateProgress([{ done: 7, total: 20, state: "failed" }])?.state,
+    "failed",
+  );
+  assert.equal(aggregateProgress([]), undefined);
 });
 
 test("SDT joins cross-page parts, keeps nested captions and excludes headers/references", () => {

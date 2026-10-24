@@ -245,3 +245,14 @@ fulltext-not-yet = 此段尚未翻译，请在文献列表右键菜单继续全�
 
 fulltext-drag = 拖动标题栏移动译文框
 fulltext-resize = 拖动边框或四角调整宽高
+
+fulltext-column = 全文翻译
+fulltext-task-checking = 检查已有译文…
+fulltext-task-translating = 翻译中
+fulltext-task-pausing = 暂停中
+fulltext-task-paused = 已暂停
+fulltext-task-failed = 失败
+fulltext-task-complete = 已完成
+fulltext-already-translated = 全文已翻译，已启用保存的译文，无需重新翻译。
+fulltext-resuming = 继续已有译文：已保存 { $done } / { $total } 段。
+fulltext-starting = 开始翻译：0 / { $total } 段。

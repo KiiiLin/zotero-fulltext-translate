@@ -49,6 +49,31 @@ export function sameTranslationLanguage(left: string, right: string): boolean {
   return !!code && code === normalize(right);
 }
 
+/** A new SDT extraction can move node IDs; reuse only matching source text. */
+export function alignTranslations(
+  file: TranslationFile,
+  paragraphs: Paragraph[],
+): TranslationFile {
+  const normalize = (text: string) => text.replace(/\s+/g, " ").trim();
+  const bySource = new Map<string, SavedTranslation>();
+  for (const entry of Object.values(file.blocks)) {
+    const key = normalize(entry.source);
+    const old = bySource.get(key);
+    if (
+      !old ||
+      `${entry.updatedAt}\0${entry.result}` > `${old.updatedAt}\0${old.result}`
+    )
+      bySource.set(key, entry);
+  }
+  const blocks = { ...file.blocks };
+  for (const paragraph of paragraphs) {
+    if (blocks[paragraph.id]?.source === paragraph.text) continue;
+    const entry = bySource.get(normalize(paragraph.text));
+    if (entry) blocks[paragraph.id] = { ...entry, source: paragraph.text };
+  }
+  return { ...file, blocks };
+}
+
 export function isPageRect(rect: unknown): rect is PageRect {
   return (
     Array.isArray(rect) &&

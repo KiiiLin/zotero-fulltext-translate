@@ -9,10 +9,16 @@ import {
   SDTDocument,
   TranslationFile,
   sameTranslationLanguage,
+  alignTranslations,
   validateTranslationFile,
 } from "./model";
 import { SyncedTranslationStore, mergeTranslations } from "./sync";
 import { ParagraphView, ViewLabels } from "./view";
+import {
+  registerProgressColumn,
+  setTranslationProgress,
+  unregisterProgressColumn,
+} from "./progress";
 import stylesheet from "../../../addon/chrome/content/styles/fulltext.css";
 
 interface ReaderAdapter {
@@ -63,7 +69,7 @@ function labels(): ViewLabels {
 const storeFor = (item: Zotero.Item) =>
   new SyncedTranslationStore(
     item,
-    `${label("title")} · ${item.getDisplayTitle()}`,
+    `Full-Text Translation · ${item.attachmentFilename || item.getDisplayTitle()}`,
   );
 function notify(message: string) {
   new ztoolkit.ProgressWindow(label("title"))
@@ -176,8 +182,15 @@ async function getSession(
     const session = await sessions.get(key)!;
     // An empty session can predate incoming sync notes. Reload even when the
     // reader has not attached to that session yet, without calling a provider.
-    const incoming = await session.store.load(session.job.file);
-    session.job.file = mergeTranslations(session.job.file, incoming);
+    const incoming = await savedTranslations(
+      item,
+      session.store,
+      session.job.file,
+    );
+    session.job.file = alignTranslations(
+      mergeTranslations(session.job.file, incoming),
+      session.job.paragraphs,
+    );
     return session;
   }
   const loading = (async (): Promise<Session> => {
@@ -191,12 +204,10 @@ async function getSession(
       targetLanguage: options.to,
       blocks: {},
     };
-    let file = await store.load(empty);
-    const syncedCount = Object.keys(file.blocks).length;
-    for (const local of await localFiles(item, empty))
-      file = mergeTranslations(file, local);
-    if (Object.keys(file.blocks).length > syncedCount)
-      file = await store.save(file);
+    const file = alignTranslations(
+      await savedTranslations(item, store, empty),
+      paragraphs,
+    );
     const directory = PathUtils.join(
       Zotero.DataDirectory.dir,
       "paragraph-translations",
@@ -258,8 +269,10 @@ async function getSession(
       },
       Number(getPref("fulltext.chunkSize")) || 3000,
     );
-    session.job.changed = () =>
+    session.job.changed = () => {
+      reportProgress(item, session.job);
       session.subscribers.forEach((refresh) => refresh());
+    };
     return session;
   })();
   sessions.set(key, loading);
@@ -269,6 +282,40 @@ async function getSession(
     sessions.delete(key);
     throw error;
   }
+}
+
+async function savedTranslations(
+  item: Zotero.Item,
+  store: SyncedTranslationStore,
+  expected: TranslationFile,
+) {
+  const synced = await store.load(expected);
+  let file = synced;
+  for (const local of await localFiles(item, expected))
+    file = mergeTranslations(file, local);
+  if (JSON.stringify(file.blocks) !== JSON.stringify(synced.blocks))
+    file = await store.save(file);
+  return file;
+}
+
+function reportProgress(item: Zotero.Item, job: ParagraphTranslationJob) {
+  if (!alive) return;
+  setTranslationProgress(item, {
+    done: job.completed,
+    total: job.paragraphs.length,
+    state:
+      job.completed === job.paragraphs.length
+        ? "complete"
+        : job.errors.size
+          ? "failed"
+          : job.stopping
+            ? job.busy
+              ? "pausing"
+              : "paused"
+            : job.busy
+              ? "translating"
+              : "paused",
+  });
 }
 
 class Controller {
@@ -352,9 +399,9 @@ class Controller {
           (await localFiles(item)).some((f) => Object.keys(f.blocks).length);
         if (this.session && !this.session.job.busy) {
           const incoming = await this.session.store.load(this.session.job.file);
-          this.session.job.file = mergeTranslations(
-            this.session.job.file,
-            incoming,
+          this.session.job.file = alignTranslations(
+            mergeTranslations(this.session.job.file, incoming),
+            this.session.job.paragraphs,
           );
         }
       }
@@ -375,6 +422,7 @@ class Controller {
           session.subscribers.add(this.refresh);
         }
         this.hasTranslation = session.job.completed > 0;
+        reportProgress(item, session.job);
         this.syncViews();
       } else this.hide();
       this.message = "";
@@ -456,11 +504,34 @@ export async function startFullTextTranslation(item: Zotero.Item) {
     if (runs.has(pdf.id)) return;
     const run: { session?: Session; stopped: boolean } = { stopped: false };
     runs.set(pdf.id, run);
+    setTranslationProgress(pdf, { done: 0, total: 0, state: "checking" });
     notify(label("loading-hint"));
     const session = await getSession(pdf);
     run.session = session;
-    if (run.stopped || !alive) return;
+    if (run.stopped || !alive) {
+      session.job.stop();
+      reportProgress(pdf, session.job);
+      return;
+    }
     enable(pdf, true);
+    reportProgress(pdf, session.job);
+    // Always reload saved notes/cache before deciding. A completed paper is
+    // opened immediately; a partial one resumes; an empty one starts fresh.
+    if (session.job.completed === session.job.paragraphs.length) {
+      notify(label("already-translated"));
+      return;
+    }
+    notify(
+      getString(
+        session.job.completed ? "fulltext-resuming" : "fulltext-starting",
+        {
+          args: {
+            done: session.job.completed,
+            total: session.job.paragraphs.length,
+          },
+        },
+      ),
+    );
     const changed = () => {
       for (const instance of controllers.values())
         if (instance.reader.itemID === pdf!.id) void instance.update();
@@ -480,6 +551,8 @@ export async function startFullTextTranslation(item: Zotero.Item) {
       }),
     );
   } catch (error) {
+    if (pdf && !runs.get(pdf.id)?.session)
+      setTranslationProgress(pdf, { done: 0, total: 0, state: "failed" });
     Zotero.logError(error as Error);
     notify(String(error));
   } finally {
@@ -512,6 +585,7 @@ export function canTranslateFullText(item: Zotero.Item) {
 
 export function registerFullTextTranslation() {
   alive = true;
+  registerProgressColumn();
   const toolbar = (event: any) => {
     const item = Zotero.Items.get(event.reader.itemID);
     if (!item?.isPDFAttachment()) return;
@@ -561,6 +635,7 @@ export function registerFullTextTranslation() {
 }
 export function unregisterFullTextTranslation() {
   alive = false;
+  unregisterProgressColumn();
   if (timer) clearInterval(timer);
   if (observer) Zotero.Notifier.unregisterObserver(observer);
   observer = undefined;

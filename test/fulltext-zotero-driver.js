@@ -73,7 +73,23 @@ async function startup() {
           note.key = data.key;
           await note.loadPrimaryData();
           note.parentID = parent.id;
-          note.setNote(data.note);
+          // Older producers used a localized title. Recognition and in-place
+          // title migration must preserve the synced key and paragraph data.
+          note.setNote(
+            data.note
+              .replace("Full-Text Translation", "段落译文")
+              .replace(
+                /zotero:\/\/paragraph-translation-block\/v1\/([^"<>]+)/g,
+                (_whole, encoded) => {
+                  const piece = JSON.parse(decodeURIComponent(encoded));
+                  piece.id = "900." + piece.id;
+                  return (
+                    "zotero://paragraph-translation-block/v1/" +
+                    encodeURIComponent(JSON.stringify(piece))
+                  );
+                },
+              ),
+          );
           note.setTags(data.tags);
           note.addRelatedItem(item);
           await note.saveTx();
@@ -198,6 +214,30 @@ async function startup() {
       );
       popup.remove();
     };
+    const progressColumn = await wait(
+      () =>
+        Zotero.getMainWindow()
+          .ZoteroPane.itemsView._getColumns()
+          .find((col) => col.dataKey.endsWith("fulltextProgress")),
+      "library progress column",
+    );
+    const progressFor = (target) => {
+      const data = Zotero.ItemTreeManager.getCustomCellData(
+        target,
+        progressColumn.dataKey,
+      );
+      return data ? JSON.parse(data) : undefined;
+    };
+    const waitForIdleMenu = () =>
+      wait(() => {
+        const popup = menu(parent);
+        const entry = popup.querySelector(
+          '[data-l10n-id="zoteropdftranslate-itemmenu-translateFullText"]',
+        );
+        const finished = entry && !entry.disabled;
+        popup.remove();
+        return finished;
+      }, "full-text menu idle");
     if (phase === 1) {
       await wait(
         () => toolbar.dataset.translationState === "untranslated",
@@ -230,6 +270,32 @@ async function startup() {
       };
       command(menu(parent), "translateFullText");
       await wait(() => calls === 1, "first translation starts");
+      check(
+        progressFor(parent)?.state === "translating" &&
+          progressFor(parent).done === 0 &&
+          progressFor(parent).total > 0,
+        "paper row reports running progress before the first paragraph finishes",
+      );
+      const main = Zotero.getMainWindow();
+      await main.ZoteroPane.selectItem(parent.id);
+      main.Zotero_Tabs.select("zotero-pane");
+      const libraryBar = await wait(
+        () => main.document.querySelector(".fulltext-library-progress"),
+        "visible library progress bar",
+      );
+      check(
+        !progressColumn.hidden &&
+          libraryBar.max > 0 &&
+          libraryBar.value === 0 &&
+          libraryBar.getBoundingClientRect().width > 10,
+        "library renders a visible progress bar in the paper row by default",
+      );
+      const progressCount = libraryBar.nextElementSibling;
+      check(
+        progressCount.textContent === `0/${progressFor(parent).total}` &&
+          progressCount.scrollWidth <= progressCount.clientWidth + 1,
+        "paragraph counts remain readable in a narrow library column",
+      );
       command(menu(parent), "pauseFullText");
       releaseFirst();
       await wait(
@@ -242,6 +308,40 @@ async function startup() {
         calls === 1,
         "pause finishes and saves current paragraph without translating later paragraphs",
       );
+      check(
+        progressFor(parent)?.state === "paused" &&
+          progressFor(parent).done === 1 &&
+          progressFor(item).done === 1,
+        "pause preserves saved progress on both the parent paper and PDF row",
+      );
+      await wait(
+        () =>
+          main.document.querySelector(".fulltext-library-progress")?.value ===
+          1,
+        "visible progress row refreshes after saving",
+      );
+      check(
+        true,
+        "visible library progress updates after a paragraph is saved",
+      );
+      try {
+        const canvas = main.document.createElement("canvas");
+        canvas.width = main.innerWidth;
+        canvas.height = main.innerHeight;
+        canvas
+          .getContext("2d")
+          .drawWindow(main, 0, 0, canvas.width, canvas.height, "#ffffff");
+        const binary = main.atob(canvas.toDataURL("image/png").split(",")[1]);
+        await IOUtils.write(
+          base + "/library-progress.png",
+          Uint8Array.from(binary, (c) => c.charCodeAt(0)),
+        );
+        results.libraryScreenshot = "library-progress.png";
+      } catch (error) {
+        results.libraryScreenshotError = String(error);
+      }
+      main.Zotero_Tabs.select(reader.tabID);
+      await pause(250);
       check(
         addon.data.translate.queue.at(-1) === sentinel,
         "paragraph translation preserves upstream selection queue",
@@ -260,6 +360,18 @@ async function startup() {
         "translation run completed",
       );
       popup.remove();
+      check(
+        progressFor(parent)?.state === "complete" &&
+          progressFor(parent).done === progressFor(parent).total,
+        "library progress reaches complete after resume",
+      );
+      const completedCalls = calls;
+      command(menu(parent), "translateFullText");
+      await waitForIdleMenu();
+      check(
+        calls === completedCalls && progressFor(parent)?.state === "complete",
+        "starting a fully translated paper checks saved data and makes no provider request",
+      );
       const overlay = await wait(
         () => win.document.querySelector(".paragraph-translations"),
         "paragraph overlay",
@@ -551,6 +663,10 @@ async function startup() {
           !win.document.querySelector(".paragraph-translations"),
         "disabling addon cleans icon, overlays, and menu",
       );
+      check(
+        !Zotero.ItemTreeManager.isCustomColumn(progressColumn.dataKey),
+        "disabling addon removes its library progress column",
+      );
       const { AddonManager } = ChromeUtils.importESModule(
         "resource://gre/modules/AddonManager.sys.mjs",
       );
@@ -607,6 +723,10 @@ async function startup() {
         recipientCalls === 1,
         "failed early provider call leaves a cached empty session",
       );
+      check(
+        progressFor(parent)?.state === "failed",
+        "library progress identifies a failed translation without reporting completion",
+      );
       recipientCalls = 0;
       Zotero.Prefs.set(enabledPref, false, true);
       await importSyncedNotes();
@@ -619,6 +739,16 @@ async function startup() {
       check(
         true,
         "incoming zh notes refresh the open zh-CN reader with no cache or provider",
+      );
+      check(
+        Zotero.Items.get(parent.getNotes()).every(
+          (note) =>
+            note
+              .getNote()
+              .includes(">Full-Text Translation · fixture.pdf · zh · 1</a>") &&
+            !note.getNote().includes(">段落译文"),
+        ),
+        "localized synced note titles become English without creating duplicate notes",
       );
       // Reading saved translations must work without a valid provider or credentials.
       toolbar.click();
@@ -635,12 +765,22 @@ async function startup() {
       );
       check(
         true,
+        "saved source text restores translations after paragraph IDs change",
+      );
+      check(
+        true,
         "cached empty session reloads incoming translations without reopening PDF",
       );
       check(
         recipientCalls === 0 &&
           !(await IOUtils.exists(base + "/data-2/paragraph-translations")),
         "reading synced notes needs no provider request or recreated local cache",
+      );
+      command(menu(parent), "translateFullText");
+      await waitForIdleMenu();
+      check(
+        recipientCalls === 0 && progressFor(parent)?.state === "complete",
+        "startup preflight reuses all synced translations with a different provider and locale",
       );
     }
     results.ok = true;
