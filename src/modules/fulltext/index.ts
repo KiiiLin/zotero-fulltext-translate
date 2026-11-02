@@ -1,5 +1,9 @@
 import { config } from "../../../package.json";
-import { getPref } from "../../utils/prefs";
+import {
+  getPref,
+  registerPrefObserver,
+  unregisterPrefObserver,
+} from "../../utils/prefs";
 import { getString } from "../../utils/locale";
 import { hex, sha256Digest } from "../../utils/crypto";
 import { inferLanguage, matchLanguage } from "../../utils/config";
@@ -18,11 +22,14 @@ import {
   registerProgressColumn,
   setTranslationProgress,
   unregisterProgressColumn,
+  invalidateSavedProgress,
+  TranslationProgress,
 } from "./progress";
 import stylesheet from "../../../addon/chrome/content/styles/fulltext.css";
 
 interface ReaderAdapter {
   itemID: number;
+  _window?: Window;
   _internalReader?: { _primaryView?: any; _secondaryView?: any };
 }
 interface Session {
@@ -37,6 +44,8 @@ let alive = false;
 let timer: ReturnType<typeof setInterval> | undefined;
 let observer: string | undefined;
 let revision = 0;
+let progressRefresh: ReturnType<typeof setTimeout> | undefined;
+let languageObserver: symbol | undefined;
 const listeners: [string, (event: any) => void][] = [];
 const label = (key: string) => getString(`fulltext-${key}`);
 const language = () => String(getPref("targetLanguage") || "zh-CN");
@@ -298,6 +307,58 @@ async function savedTranslations(
   return file;
 }
 
+/** Read saved results for a library row without opening a PDF or calling a provider.
+ * SDT is loaded only for PDFs that actually have saved translations, one row at a time.
+ * Recount against the current document so older notes and changed node IDs also work.
+ */
+async function restoreProgress(
+  item: Zotero.Item,
+): Promise<TranslationProgress | undefined> {
+  const store = storeFor(item);
+  const locals = await localFiles(item);
+  if (
+    !(await store.has(language())) &&
+    !locals.some((file) => Object.keys(file.blocks).length)
+  )
+    return;
+  const sdt = (Zotero as any).SDT;
+  if (typeof sdt?.getReader !== "function") return;
+  const pack = await sdt.getReader(item.id, { isPriority: false });
+  if (!pack?.materialize) return;
+  const document = (await pack.materialize()) as SDTDocument;
+  const sourceHash = document.metadata?.source?.hash;
+  if (!/^[a-f0-9]{32,64}$/i.test(sourceHash || "")) return;
+  const paragraphs = extractParagraphs(document);
+  if (!paragraphs.length) return;
+  const expected: TranslationFile = {
+    version: 1,
+    sourceHash,
+    targetLanguage: language(),
+    settingsHash: "progress",
+    blocks: {},
+  };
+  let file = await store.load(expected);
+  for (const local of locals) file = mergeTranslations(file, local);
+  file = alignTranslations(file, paragraphs);
+  const done = paragraphs.filter(
+    (paragraph) => file.blocks[paragraph.id]?.source === paragraph.text,
+  ).length;
+  if (!done) return;
+  return {
+    done,
+    total: paragraphs.length,
+    state: done === paragraphs.length ? "complete" : "paused",
+  };
+}
+
+function refreshSavedProgress() {
+  if (progressRefresh) clearTimeout(progressRefresh);
+  progressRefresh = setTimeout(() => {
+    progressRefresh = undefined;
+    if (alive) invalidateSavedProgress();
+  }, 300);
+}
+
 function reportProgress(item: Zotero.Item, job: ParagraphTranslationJob) {
   if (!alive) return;
   setTranslationProgress(item, {
@@ -462,6 +523,7 @@ class Controller {
             labels(),
             stylesheet,
             () => String(getPref("fulltext.shortcut") || "Alt+T"),
+            this.reader._window,
           ),
         );
     this.views.forEach((view) => view.refresh());
@@ -585,7 +647,11 @@ export function canTranslateFullText(item: Zotero.Item) {
 
 export function registerFullTextTranslation() {
   alive = true;
-  registerProgressColumn();
+  registerProgressColumn(restoreProgress);
+  languageObserver = registerPrefObserver(
+    "targetLanguage",
+    refreshSavedProgress,
+  );
   const toolbar = (event: any) => {
     const item = Zotero.Items.get(event.reader.itemID);
     if (!item?.isPDFAttachment()) return;
@@ -615,6 +681,7 @@ export function registerFullTextTranslation() {
     {
       notify: () => {
         revision++;
+        refreshSavedProgress();
       },
     },
     ["item"],
@@ -636,6 +703,10 @@ export function registerFullTextTranslation() {
 export function unregisterFullTextTranslation() {
   alive = false;
   unregisterProgressColumn();
+  if (progressRefresh) clearTimeout(progressRefresh);
+  progressRefresh = undefined;
+  if (languageObserver) unregisterPrefObserver(languageObserver);
+  languageObserver = undefined;
   if (timer) clearInterval(timer);
   if (observer) Zotero.Notifier.unregisterObserver(observer);
   observer = undefined;

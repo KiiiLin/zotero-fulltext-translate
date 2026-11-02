@@ -97,6 +97,22 @@
   overflow: auto;
   padding: 0 10px 12px;
 }
+/* The PDF viewer hides the browser's selection highlight. Cards use native
+   text selection and their own visible highlight, including the source text. */
+.paragraph-translations .pt-card-content,
+.paragraph-translations .pt-card-content * {
+  user-select: text;
+  -moz-user-select: text;
+  cursor: text;
+}
+.paragraph-translations .pt-card-content ::selection {
+  background: #b4d7ff;
+  color: #17212b;
+}
+.paragraph-translations .pt-card-content button,
+.paragraph-translations .pt-card-content summary {
+  cursor: pointer;
+}
 .paragraph-translations .pt-guides {
   position: fixed;
   inset: 0;

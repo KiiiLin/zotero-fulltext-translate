@@ -101,6 +101,7 @@ export class ParagraphView {
     private labels: ViewLabels,
     stylesheet: string,
     shortcut: () => string,
+    chromeWindow?: Window,
   ) {
     const doc = win.document;
     // Reader content cannot load chrome:// plugin stylesheets. Inject the
@@ -165,6 +166,43 @@ export class ParagraphView {
         true,
       );
     }
+    // Handle our DOM selection before the PDF viewer's capture handler, which
+    // only understands its own text ranges. Chrome capture receives embedded
+    // browser events first; retain content-window listeners as a fallback.
+    const copySelection = (event: Event) => {
+      const origin = event.composedPath()[0] as Node | undefined;
+      const owner = origin?.nodeType === 9 ? origin : origin?.ownerDocument;
+      // isSameNode compares the underlying DOM node across Firefox's security wrappers.
+      if ((!owner || !doc.isSameNode(owner)) && !doc.hasFocus()) return;
+      const selection = win.getSelection();
+      if (
+        !selection ||
+        selection.isCollapsed ||
+        !selection.anchorNode ||
+        !selection.focusNode
+      )
+        return;
+      const container = (
+        selection.anchorNode.nodeType === 1
+          ? selection.anchorNode
+          : selection.anchorNode.parentElement
+      ) as Element | null;
+      const content = container?.closest(".pt-card-content");
+      if (
+        !content ||
+        !this.root.contains(content) ||
+        !content.contains(selection.focusNode)
+      )
+        return;
+      const copy = event as ClipboardEvent;
+      if (!copy.clipboardData) return;
+      copy.clipboardData.clearData();
+      copy.clipboardData.setData("text/plain", selection.toString());
+      copy.preventDefault();
+      copy.stopImmediatePropagation();
+    };
+    for (const target of new Set([chromeWindow, win.top, win]))
+      if (target) listen(target, "copy", copySelection, true);
     listen(win, "blur", () => this.endInteraction());
     listen(this.root, "toggle", () => this.schedule(), true);
     listen(doc, "pointermove", (event) => {

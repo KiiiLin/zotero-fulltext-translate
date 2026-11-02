@@ -23,12 +23,28 @@ fs.copyFileSync(
   path.join(base, "package.xpi"),
 );
 async function run(phase) {
+  const profilePhase = phase === 3 ? 1 : phase;
+  const profilePath = path.join(base, "profile-" + profilePhase);
+  if (phase === 3) {
+    fs.rmSync(path.join(base, "data-1/paragraph-translations"), {
+      recursive: true,
+      force: true,
+    });
+    // Restart the original, closed test profile/library. Only its disposable
+    // extension bootstrap is swapped to load this driver again.
+    for (const name of [
+      "addonStartup.json.lz4",
+      "extensions.json",
+      "extensions/" + config.addonID + ".xpi",
+    ])
+      fs.rmSync(path.join(profilePath, name), { force: true });
+  }
   const addonPath = path.join(base, "addon-" + phase);
   fs.cpSync(path.join(root, "build/addon"), addonPath, { recursive: true });
-  fs.mkdirSync(path.join(base, "profile-" + phase, "extensions"), {
+  fs.mkdirSync(path.join(profilePath, "extensions"), {
     recursive: true,
   });
-  fs.mkdirSync(path.join(base, "data-" + phase));
+  fs.mkdirSync(path.join(base, "data-" + profilePhase), { recursive: true });
   const prefs = {
     "extensions.autoDisableScopes": 0,
     "extensions.enabledScopes": 5,
@@ -49,7 +65,7 @@ async function run(phase) {
     [`${config.prefsPrefix}.fulltext.delay`]: 250,
   };
   fs.writeFileSync(
-    path.join(base, "profile-" + phase, "user.js"),
+    path.join(profilePath, "user.js"),
     Object.entries(prefs)
       .map(
         ([key, value]) =>
@@ -58,7 +74,7 @@ async function run(phase) {
       .join("\n"),
   );
   fs.writeFileSync(
-    path.join(base, "profile-" + phase, "extensions", config.addonID),
+    path.join(profilePath, "extensions", config.addonID),
     addonPath,
   );
   const driverURL = pathToFileURL(
@@ -82,9 +98,9 @@ startup = async function(...args) {
         "--headless",
         "--no-remote",
         "--profile",
-        path.join(base, "profile-" + phase),
+        profilePath,
         "--dataDir",
-        path.join(base, "data-" + phase),
+        path.join(base, "data-" + profilePhase),
         "-ZoteroDebugText",
       ],
       {
@@ -121,6 +137,7 @@ startup = async function(...args) {
   try {
     await run(1);
     await run(2);
+    await run(3);
   } finally {
     console.log("Isolated test artifacts:", base);
   }

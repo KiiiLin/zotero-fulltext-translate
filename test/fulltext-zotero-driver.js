@@ -25,7 +25,7 @@ async function startup() {
       "plugin initialized",
     );
     check(
-      Zotero.DataDirectory.dir === base + "/data-" + phase,
+      Zotero.DataDirectory.dir === base + "/data-" + (phase === 3 ? 1 : phase),
       "isolated data directory",
     );
     let item, parent, importSyncedNotes;
@@ -37,6 +37,114 @@ async function startup() {
         file: base + "/fixture.pdf",
         parentItemID: parent.id,
       });
+    } else if (phase === 3) {
+      const exported = await IOUtils.readJSON(base + "/sync-export.json");
+      parent = await Zotero.Items.getByLibraryAndKeyAsync(
+        Zotero.Libraries.userLibraryID,
+        exported.parentKey,
+      );
+      item = await Zotero.Items.getByLibraryAndKeyAsync(
+        Zotero.Libraries.userLibraryID,
+        exported.attachmentKey,
+      );
+      let providerCalls = 0;
+      addon.api.translate = async () => {
+        providerCalls++;
+        throw new Error("Unexpected provider request during restart restore");
+      };
+      const main = Zotero.getMainWindow();
+      check(
+        !Zotero.Reader._readers.some((reader) => reader.itemID === item.id),
+        "restarted library has no open PDF reader",
+      );
+      await main.ZoteroPane.selectItem(parent.id);
+      main.Zotero_Tabs.select("zotero-pane");
+      const column = await wait(
+        () =>
+          main.ZoteroPane.itemsView
+            ._getColumns()
+            .find((col) => col.dataKey.endsWith("fulltextProgress")),
+        "restarted progress column",
+      );
+      const getProgress = (target) => {
+        const data = Zotero.ItemTreeManager.getCustomCellData(
+          target,
+          column.dataKey,
+        );
+        return data ? JSON.parse(data) : undefined;
+      };
+      await wait(
+        () => getProgress(parent)?.state === "complete",
+        "completed state restored after restart",
+      );
+      check(
+        getProgress(item)?.state === "complete" &&
+          getProgress(parent).done === getProgress(parent).total,
+        "restart restores complete state for parent and attachment without opening PDF",
+      );
+      const complete = await wait(
+        () => main.document.querySelector(".fulltext-library-complete"),
+        "restarted round checkmark",
+      );
+      check(
+        complete.getBoundingClientRect().width > 0 &&
+          !complete.parentElement.querySelector("progress"),
+        "completed library row shows a round checkmark instead of a progress bar after restart",
+      );
+      const partial = await Zotero.Items.getByLibraryAndKeyAsync(
+        Zotero.Libraries.userLibraryID,
+        exported.partialKey,
+      );
+      await wait(
+        () => getProgress(partial)?.state === "paused",
+        "partial state restored",
+      );
+      check(
+        getProgress(partial).done === 1 && getProgress(partial).total > 1,
+        "restart restores partial translation counts without reporting completion",
+      );
+      const untouched = await Zotero.Items.getByLibraryAndKeyAsync(
+        Zotero.Libraries.userLibraryID,
+        exported.untouchedKey,
+      );
+      getProgress(untouched);
+      await pause(500);
+      check(
+        !getProgress(untouched),
+        "identical untranslated PDF stays blank because translations are attachment-bound",
+      );
+      Zotero.Prefs.set(
+        "extensions.zotero.ZoteroPDFTranslate.targetLanguage",
+        "zh-TW",
+        true,
+      );
+      await wait(() => !getProgress(item), "other target language stays blank");
+      check(
+        true,
+        "restored completion respects target language and keeps traditional Chinese separate",
+      );
+      Zotero.Prefs.set(
+        "extensions.zotero.ZoteroPDFTranslate.targetLanguage",
+        "zh_CN",
+        true,
+      );
+      await wait(
+        () => getProgress(item)?.state === "complete",
+        "language alias restores completion",
+      );
+      check(
+        true,
+        "switching back to an equivalent language restores the round checkmark",
+      );
+      check(
+        providerCalls === 0 &&
+          !Zotero.Reader._readers.some((reader) => reader.itemID === item.id),
+        "library restoration needs no provider, credentials or open PDF",
+      );
+      results.ok = true;
+      await IOUtils.writeJSON(base + "/result-" + phase + ".json", results);
+      Services.startup.quit(Ci.nsIAppStartup.eAttemptQuit);
+      return;
     } else {
       const exported = await IOUtils.readJSON(base + "/sync-export.json");
       for (let i = 0; i < 5; i++) {
@@ -340,6 +448,10 @@ async function startup() {
       } catch (error) {
         results.libraryScreenshotError = String(error);
       }
+      const partialNotes = Zotero.Items.get(parent.getNotes()).map((note) => ({
+        html: note.getNote(),
+        tags: note.getTags(),
+      }));
       main.Zotero_Tabs.select(reader.tabID);
       await pause(250);
       check(
@@ -365,6 +477,35 @@ async function startup() {
           progressFor(parent).done === progressFor(parent).total,
         "library progress reaches complete after resume",
       );
+      main.Zotero_Tabs.select("zotero-pane");
+      const completedIcon = await wait(
+        () => main.document.querySelector(".fulltext-library-complete"),
+        "completed checkmark",
+      );
+      check(
+        completedIcon.querySelector("circle") &&
+          completedIcon.querySelector("path") &&
+          !completedIcon.parentElement.querySelector("progress"),
+        "completion replaces the progress bar with a circle and checkmark",
+      );
+      check(
+        completedIcon.parentElement.title.includes("100%"),
+        "completed checkmark keeps paragraph counts in its tooltip",
+      );
+      const completionCanvas = main.document.createElement("canvas");
+      completionCanvas.width = main.innerWidth;
+      completionCanvas.height = main.innerHeight;
+      completionCanvas
+        .getContext("2d")
+        .drawWindow(main, 0, 0, main.innerWidth, main.innerHeight, "#ffffff");
+      const completionBinary = main.atob(
+        completionCanvas.toDataURL("image/png").split(",")[1],
+      );
+      await IOUtils.write(
+        base + "/library-complete.png",
+        Uint8Array.from(completionBinary, (c) => c.charCodeAt(0)),
+      );
+      main.Zotero_Tabs.select(reader.tabID);
       const completedCalls = calls;
       command(menu(parent), "translateFullText");
       await waitForIdleMenu();
@@ -398,6 +539,107 @@ async function startup() {
           bounds.top < win.innerHeight,
         "shortcut opens a visible translation card anchored to PDF text",
       );
+      const textNode = card.querySelector(".pt-card-body").firstChild;
+      const textRange = win.document.createRange();
+      textRange.setStart(textNode, 0);
+      textRange.setEnd(textNode, 12);
+      const textRect = textRange.getClientRects()[0];
+      win.focus();
+      const mouse = (type, x, y, buttons) =>
+        Components.utils
+          .unwaiveXrays(win)
+          .windowUtils.sendMouseEvent(
+            type,
+            x,
+            y,
+            0,
+            1,
+            0,
+            false,
+            0,
+            win.MouseEvent.MOZ_SOURCE_MOUSE,
+            true,
+            false,
+            buttons,
+          );
+      mouse(
+        "mousedown",
+        textRect.left + 1,
+        textRect.top + textRect.height / 2,
+        1,
+      );
+      for (let i = 1; i <= 6; i++) {
+        mouse(
+          "mousemove",
+          textRect.left + (textRect.width * i) / 6 - 1,
+          textRect.top + textRect.height / 2,
+          1,
+        );
+        await pause(20);
+      }
+      mouse(
+        "mouseup",
+        textRect.right - 1,
+        textRect.top + textRect.height / 2,
+        0,
+      );
+      await pause(200);
+      results.selectionDebug = {
+        selected: win.getSelection().toString(),
+        bodyStyle: win.getComputedStyle(card.querySelector(".pt-card-body"))
+          .userSelect,
+      };
+      check(
+        win.getSelection().toString().includes("测试译文"),
+        "native mouse drag selects translation text",
+      );
+      const selectionStyle = win.getComputedStyle(
+        card.querySelector(".pt-card-body"),
+        "::selection",
+      );
+      check(
+        selectionStyle.backgroundColor !== "rgba(0, 0, 0, 0)" &&
+          selectionStyle.backgroundColor !== "transparent",
+        "selected translation has a visible highlight despite PDF selection styles",
+      );
+      check(
+        !Zotero.Utilities.Internal.getClipboard("text/plain"),
+        "isolated headless clipboard starts empty",
+      );
+      let copyErrors = 0;
+      const countCopyErrors = () => {
+        copyErrors++;
+      };
+      win.addEventListener("error", countCopyErrors);
+      check(
+        Components.utils.unwaiveXrays(win.document).execCommand("copy"),
+        "native copy command executes for selected translation",
+      );
+      check(
+        Zotero.Utilities.Internal.getClipboard("text/plain")?.includes(
+          "测试译文",
+        ),
+        "native clipboard contains selected translation rather than PDF selection",
+      );
+      win.removeEventListener("error", countCopyErrors);
+      check(
+        copyErrors === 0,
+        "copying card text bypasses incompatible PDF copy processing without reader errors",
+      );
+      const toolbarInput = doc.createElement("input");
+      toolbarInput.value = "toolbar copy remains native";
+      doc.body.append(toolbarInput);
+      toolbarInput.focus();
+      toolbarInput.select();
+      Components.utils.unwaiveXrays(doc).execCommand("copy");
+      check(
+        Zotero.Utilities.Internal.getClipboard("text/plain") ===
+          toolbarInput.value,
+        "copying outside cards keeps the native clipboard behavior",
+      );
+      toolbarInput.remove();
+      win.focus();
+      win.getSelection().removeAllRanges();
       const guideFor = (element) =>
         win.document.querySelector(
           `.pt-guides g[data-paragraph-id="${element.dataset.paragraphId}"]`,
@@ -651,10 +893,34 @@ async function startup() {
           ),
         "translations are child notes bound to paper and present in native sync JSON",
       );
+      const partialParent = new Zotero.Item("journalArticle");
+      partialParent.setField("title", "Partly translated restart fixture");
+      await partialParent.saveTx();
+      const partialItem = await Zotero.Attachments.importFromFile({
+        file: base + "/fixture.pdf",
+        parentItemID: partialParent.id,
+      });
+      for (const data of partialNotes) {
+        const note = new Zotero.Item("note");
+        note.parentID = partialParent.id;
+        note.setNote(data.html.replaceAll(item.key, partialItem.key));
+        note.setTags(data.tags);
+        note.addRelatedItem(partialItem);
+        await note.saveTx();
+      }
+      const untouchedParent = new Zotero.Item("journalArticle");
+      untouchedParent.setField("title", "Untranslated restart fixture");
+      await untouchedParent.saveTx();
+      const untouched = await Zotero.Attachments.importFromFile({
+        file: base + "/fixture.pdf",
+        parentItemID: untouchedParent.id,
+      });
       await IOUtils.writeJSON(base + "/sync-export.json", {
         parentKey: parent.key,
         attachmentKey: item.key,
         attachmentID: item.id,
+        partialKey: partialItem.key,
+        untouchedKey: untouched.key,
         notes: notes.map((n) => n.toJSON()),
       });
       addon.hooks.onShutdown();
@@ -667,6 +933,10 @@ async function startup() {
         !Zotero.ItemTreeManager.isCustomColumn(progressColumn.dataKey),
         "disabling addon removes its library progress column",
       );
+      reader.close();
+      main.Zotero_Tabs.select("zotero-pane");
+      await main.ZoteroPane.selectItem(parent.id);
+      await pause(300);
       const { AddonManager } = ChromeUtils.importESModule(
         "resource://gre/modules/AddonManager.sys.mjs",
       );

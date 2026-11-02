@@ -25,7 +25,12 @@ import {
   NOTE_BYTES,
   recoverNotes,
 } from "../src/modules/fulltext/sync";
-import { aggregateProgress } from "../src/modules/fulltext/progress";
+import {
+  aggregateProgress,
+  registerProgressColumn,
+  unregisterProgressColumn,
+  setTranslationProgress,
+} from "../src/modules/fulltext/progress";
 
 const rect = [0, 10, 20, 100, 80] as [number, number, number, number, number];
 const node = (text: string, extra = {}) => ({
@@ -428,4 +433,60 @@ test("shortcuts require exact modifiers and ignore held keys", () => {
       "Ctrl+Shift+T",
     ),
   );
+});
+
+test("library progress restores after restart and an older read cannot overwrite a newer task", async () => {
+  const globals = globalThis as any;
+  const original = { Zotero: globals.Zotero, addon: globals.addon };
+  const item = {
+    id: 1,
+    isRegularItem: () => false,
+    isPDFAttachment: () => true,
+  };
+  let column: any;
+  globals.addon = {
+    data: {
+      locale: {
+        current: { formatMessagesSync: () => [{ value: "Full-text" }] },
+      },
+    },
+  };
+  globals.Zotero = {
+    getMainWindows: () => [],
+    Items: { get: () => [item] },
+    ItemTreeManager: {
+      registerColumn: (options: any) => {
+        column = options;
+        return "test-progress";
+      },
+      unregisterColumn: () => {},
+    },
+    logError: (error: Error) => {
+      throw error;
+    },
+  };
+  const complete = { done: 3, total: 3, state: "complete" as const };
+  try {
+    let release!: (value: any) => void;
+    registerProgressColumn(
+      () =>
+        new Promise((resolve) => {
+          release = resolve;
+        }),
+    );
+    assert.equal(column.dataProvider(item), "");
+    setTranslationProgress(item as any, complete);
+    release({ done: 1, total: 3, state: "paused" });
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.deepEqual(JSON.parse(column.dataProvider(item)), complete);
+    unregisterProgressColumn();
+    registerProgressColumn(async () => complete);
+    assert.equal(column.dataProvider(item), "");
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.deepEqual(JSON.parse(column.dataProvider(item)), complete);
+  } finally {
+    unregisterProgressColumn();
+    globals.Zotero = original.Zotero;
+    globals.addon = original.addon;
+  }
 });
