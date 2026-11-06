@@ -28,7 +28,7 @@ _使用仓库内原创测试 PDF 与模拟译文展示卡片及原文定位，�
 
 ## 安装
 
-支持 **Zotero 10.0.6–10.x 桌面版**。Linux Zotero 10.0.6 已验证；Windows 尚未实机验证。
+支持 **Zotero 10.0.6–10.x 桌面版**。Windows 与 Linux 双端均已通过实机测试。
 
 1. 从 [Releases](https://github.com/KiiiLin/zotero-fulltext-translate/releases) 下载 `zotero-fulltext-translate.xpi`。
 2. 在 Zotero「工具 → 插件 → 齿轮 → 从文件安装插件」选择 XPI。
