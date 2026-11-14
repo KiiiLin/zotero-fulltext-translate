@@ -444,7 +444,11 @@ export class ParagraphView {
       if (!card) continue;
       const saved = this.job.get(paragraph);
       const error = this.job.errors.get(paragraph.id);
-      card.body.textContent = saved?.result || error || this.labels.waiting;
+      const text = saved?.result || error || this.labels.waiting;
+      // Controller polling and unrelated job updates also refresh open cards.
+      // Setting identical textContent still replaces the Text node and collapses
+      // native selection ranges, interrupting a drag or copy every 1500 ms.
+      if (card.body.textContent !== text) card.body.textContent = text;
       card.body.classList.toggle("pt-error", !!error && !saved);
       card.element.querySelector<HTMLElement>(".pt-retry")!.hidden = !error;
       card.body.title = saved

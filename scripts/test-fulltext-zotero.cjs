@@ -12,6 +12,10 @@ if (!binary)
     "Usage: node scripts/test-fulltext-zotero.cjs /path/to/zotero",
   );
 const root = path.resolve(__dirname, "..");
+const notesOnly = process.argv.includes("--notes-only");
+const selectionOnly = process.argv.includes("--selection-only");
+const queueOnly = process.argv.includes("--queue-only");
+const focused = notesOnly || selectionOnly || queueOnly;
 fs.mkdirSync(path.join(root, ".scaffold"), { recursive: true });
 const base = fs.mkdtempSync(path.join(root, ".scaffold/fulltext-runtime-"));
 fs.copyFileSync(
@@ -22,6 +26,28 @@ fs.copyFileSync(
   path.join(root, "build/zotero-fulltext-translate.xpi"),
   path.join(base, "package.xpi"),
 );
+if (focused) {
+  require("esbuild").buildSync({
+    entryPoints: [
+      path.join(
+        root,
+        queueOnly
+          ? "test/fulltext-queue-zotero.ts"
+          : selectionOnly
+            ? "test/fulltext-selection-zotero.ts"
+            : "test/fulltext-notes-zotero.ts",
+      ),
+    ],
+    loader: { ".css": "text" },
+    bundle: true,
+    format: "iife",
+    globalName: "FulltextNoteTests",
+    platform: "browser",
+    target: "firefox115",
+    outfile: path.join(base, "notes-driver.js"),
+    footer: { js: "var startup = FulltextNoteTests.startup;" },
+  });
+}
 async function run(phase) {
   const profilePhase = phase === 3 ? 1 : phase;
   const profilePath = path.join(base, "profile-" + profilePhase);
@@ -78,7 +104,9 @@ async function run(phase) {
     addonPath,
   );
   const driverURL = pathToFileURL(
-    path.join(root, "test/fulltext-zotero-driver.js"),
+    focused
+      ? path.join(base, "notes-driver.js")
+      : path.join(root, "test/fulltext-zotero-driver.js"),
   ).href;
   fs.appendFileSync(
     path.join(addonPath, "bootstrap.js"),
@@ -136,8 +164,10 @@ startup = async function(...args) {
 (async () => {
   try {
     await run(1);
-    await run(2);
-    await run(3);
+    if (!focused) {
+      await run(2);
+      await run(3);
+    }
   } finally {
     console.log("Isolated test artifacts:", base);
   }

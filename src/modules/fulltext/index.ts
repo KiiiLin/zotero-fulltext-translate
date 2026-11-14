@@ -8,6 +8,7 @@ import { getString } from "../../utils/locale";
 import { hex, sha256Digest } from "../../utils/crypto";
 import { inferLanguage, matchLanguage } from "../../utils/config";
 import { ParagraphTranslationJob } from "./job";
+import { SerialTranslationQueue } from "./queue";
 import {
   extractParagraphs,
   SDTDocument,
@@ -20,6 +21,7 @@ import { SyncedTranslationStore, mergeTranslations } from "./sync";
 import { ParagraphView, ViewLabels } from "./view";
 import {
   registerProgressColumn,
+  getTranslationProgress,
   setTranslationProgress,
   unregisterProgressColumn,
   invalidateSavedProgress,
@@ -40,6 +42,7 @@ interface Session {
 const controllers = new Map<ReaderAdapter, Controller>();
 const sessions = new Map<string, Promise<Session>>();
 const runs = new Map<number, { session?: Session; stopped: boolean }>();
+let taskQueue: SerialTranslationQueue<Zotero.Item> | undefined;
 let alive = false;
 let timer: ReturnType<typeof setInterval> | undefined;
 let observer: string | undefined;
@@ -80,11 +83,6 @@ const storeFor = (item: Zotero.Item) =>
     item,
     `Full-Text Translation · ${item.attachmentFilename || item.getDisplayTitle()}`,
   );
-function notify(message: string) {
-  new ztoolkit.ProgressWindow(label("title"))
-    .createLine({ text: message })
-    .show(6000);
-}
 async function settings(item: Zotero.Item) {
   const service = String(getPref("translateSource") || "");
   const toLanguage = String(getPref("targetLanguage") || "");
@@ -364,6 +362,7 @@ function reportProgress(item: Zotero.Item, job: ParagraphTranslationJob) {
   setTranslationProgress(item, {
     done: job.completed,
     total: job.paragraphs.length,
+    ...(job.errors.size ? { detail: [...job.errors.values()].join("\n") } : {}),
     state:
       job.completed === job.paragraphs.length
         ? "complete"
@@ -426,7 +425,8 @@ class Controller {
   async toggle() {
     if (this.loading) return;
     if (!this.hasTranslation) {
-      notify(label("menu-hint"));
+      this.message = label("menu-hint");
+      this.paint();
       return;
     }
     const item = Zotero.Items.get(this.reader.itemID);
@@ -559,44 +559,59 @@ async function resolvePDF(item: Zotero.Item): Promise<Zotero.Item> {
   }
   throw new Error(label("pdf-only"));
 }
+/** Resolve the whole selection before admission; parent + selected PDF is one job. */
+export async function enqueueFullTextTranslations(items: Zotero.Item[]) {
+  const queue = taskQueue;
+  if (!alive || !queue) return;
+  const pdfs: Zotero.Item[] = [];
+  for (const item of items) {
+    if (!canTranslateFullText(item) || !item.isEditable() || item.deleted)
+      continue;
+    try {
+      const pdf = await resolvePDF(item);
+      if (pdf.isEditable() && !pdf.deleted) pdfs.push(pdf);
+    } catch (error) {
+      Zotero.logError(error as Error);
+      setTranslationProgress(item, {
+        done: 0,
+        total: 0,
+        state: "failed",
+        detail: String(error),
+      });
+    }
+  }
+  if (alive && taskQueue === queue) queue.add(pdfs);
+}
 export async function startFullTextTranslation(item: Zotero.Item) {
-  let pdf: Zotero.Item | undefined;
+  await enqueueFullTextTranslations([item]);
+}
+
+async function translateQueuedPDF(
+  pdf: Zotero.Item,
+  cancelled: () => boolean,
+): Promise<"complete" | "paused"> {
+  const run: { session?: Session; stopped: boolean } = { stopped: false };
+  runs.set(pdf.id, run);
   try {
-    pdf = await resolvePDF(item);
-    if (runs.has(pdf.id)) return;
-    const run: { session?: Session; stopped: boolean } = { stopped: false };
-    runs.set(pdf.id, run);
+    if (!alive || cancelled()) return "paused";
+    if (pdf.deleted || !pdf.isEditable())
+      throw new Error(label("queue-unavailable"));
     setTranslationProgress(pdf, { done: 0, total: 0, state: "checking" });
-    notify(label("loading-hint"));
     const session = await getSession(pdf);
     run.session = session;
-    if (run.stopped || !alive) {
+    if (run.stopped || cancelled() || !alive) {
       session.job.stop();
       reportProgress(pdf, session.job);
-      return;
+      return "paused";
     }
     enable(pdf, true);
     reportProgress(pdf, session.job);
-    // Always reload saved notes/cache before deciding. A completed paper is
-    // opened immediately; a partial one resumes; an empty one starts fresh.
-    if (session.job.completed === session.job.paragraphs.length) {
-      notify(label("already-translated"));
-      return;
-    }
-    notify(
-      getString(
-        session.job.completed ? "fulltext-resuming" : "fulltext-starting",
-        {
-          args: {
-            done: session.job.completed,
-            total: session.job.paragraphs.length,
-          },
-        },
-      ),
-    );
+    // Check synced notes/cache at execution time, including notes received while queued.
+    if (session.job.completed === session.job.paragraphs.length)
+      return "complete";
     const changed = () => {
       for (const instance of controllers.values())
-        if (instance.reader.itemID === pdf!.id) void instance.update();
+        if (instance.reader.itemID === pdf.id) void instance.update();
     };
     session.subscribers.add(changed);
     try {
@@ -604,37 +619,23 @@ export async function startFullTextTranslation(item: Zotero.Item) {
     } finally {
       session.subscribers.delete(changed);
     }
-    notify(
-      getString("fulltext-progress", {
-        args: {
-          done: session.job.completed,
-          total: session.job.paragraphs.length,
-        },
-      }),
-    );
-  } catch (error) {
-    if (pdf && !runs.get(pdf.id)?.session)
-      setTranslationProgress(pdf, { done: 0, total: 0, state: "failed" });
-    Zotero.logError(error as Error);
-    notify(String(error));
+    return session.job.completed === session.job.paragraphs.length
+      ? "complete"
+      : "paused";
   } finally {
-    if (pdf) runs.delete(pdf.id);
+    runs.delete(pdf.id);
   }
 }
 export async function pauseFullTextTranslation(item: Zotero.Item) {
   const ids = item.isRegularItem() ? item.getAttachments() : [item.id];
-  for (const id of ids) {
-    const run = runs.get(id);
-    if (run) {
-      run.stopped = true;
-      run.session?.job.stop();
-    }
-  }
+  for (const id of ids) taskQueue?.cancel(id);
 }
 export function hasFullTextJob(item: Zotero.Item) {
   return (
-    runs.has(item.id) ||
-    (item.isRegularItem() && item.getAttachments().some((id) => runs.has(id)))
+    !!taskQueue &&
+    (taskQueue.has(item.id) ||
+      (item.isRegularItem() &&
+        item.getAttachments().some((id) => taskQueue!.has(id))))
   );
 }
 export function canTranslateFullText(item: Zotero.Item) {
@@ -647,10 +648,39 @@ export function canTranslateFullText(item: Zotero.Item) {
 
 export function registerFullTextTranslation() {
   alive = true;
+  taskQueue = new SerialTranslationQueue(
+    (item) => item.id,
+    translateQueuedPDF,
+    {
+      queued: (item) =>
+        setTranslationProgress(item, {
+          done: getTranslationProgress(item.id)?.done || 0,
+          total: getTranslationProgress(item.id)?.total || 0,
+          state: "queued",
+        }),
+      cancelActive: (item) => {
+        const run = runs.get(item.id);
+        if (run) {
+          run.stopped = true;
+          run.session?.job.stop();
+        }
+      },
+      settled: (item, outcome, error) => {
+        if (!alive) return;
+        if (error) Zotero.logError(error as Error);
+        const previous = getTranslationProgress(item.id);
+        setTranslationProgress(item, {
+          done: previous?.done || 0,
+          total: previous?.total || 0,
+          state: outcome,
+          ...(error ? { detail: String(error) } : {}),
+        });
+      },
+    },
+  );
   registerProgressColumn(restoreProgress);
-  languageObserver = registerPrefObserver(
-    "targetLanguage",
-    refreshSavedProgress,
+  languageObserver = registerPrefObserver("targetLanguage", () =>
+    invalidateSavedProgress(true),
   );
   const toolbar = (event: any) => {
     const item = Zotero.Items.get(event.reader.itemID);
@@ -702,6 +732,8 @@ export function registerFullTextTranslation() {
 }
 export function unregisterFullTextTranslation() {
   alive = false;
+  taskQueue?.close();
+  taskQueue = undefined;
   unregisterProgressColumn();
   if (progressRefresh) clearTimeout(progressRefresh);
   progressRefresh = undefined;

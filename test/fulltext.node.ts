@@ -21,6 +21,7 @@ import {
 } from "../src/modules/fulltext/geometry";
 import {
   encodeNotes,
+  isTranslationBlockID,
   mergeTranslations,
   NOTE_BYTES,
   recoverNotes,
@@ -489,4 +490,553 @@ test("library progress restores after restart and an older read cannot overwrite
     globals.Zotero = original.Zotero;
     globals.addon = original.addon;
   }
+});
+
+// Synthetic SDT geometry reproduces the two-column/page-break failure without
+// bundling a user's paper or translations into the repository.
+const prose =
+  "Our detailed evaluation compares several learned policies across challenging assembly tasks and reports improved performance for";
+const pageUnit = (
+  text: string,
+  box: typeof rect,
+  extra: any = {},
+  indent = 0,
+) =>
+  node(text, {
+    anchor: { pageRects: [box] },
+    content: [
+      {
+        text,
+        anchor: {
+          textMap: JSON.stringify([
+            [0, box[0], box[1] + indent, box[4] - 9, box[3], box[4]],
+          ]),
+        },
+      },
+    ],
+    ...extra,
+  });
+const bottom: typeof rect = [0, 320, 60, 560, 120];
+const top: typeof rect = [1, 50, 330, 290, 350];
+const documentOf = (content: any[]) => ({
+  schemaVersion: "1.2.0",
+  metadata: { source: { hash: "pdf" } },
+  content,
+});
+const floatingTable = () => ({
+  type: "table",
+  content: [
+    node("A table cell should not be added to body text."),
+    node("Table II. Evaluation results.", {
+      type: "caption",
+      flowClass: "auxiliary",
+    }),
+  ],
+});
+
+test("numbered auxiliary prose and inline list items are recovered, without affiliations or reference lists", () => {
+  const recovered = extractParagraphs(
+    documentOf([
+      pageUnit(`2) Impact of Distribution Shift: ${prose}`, bottom, {
+        flowClass: "auxiliary",
+      }),
+      pageUnit(
+        "1University 2Institute 3Laboratory contact@example.org",
+        bottom,
+        { flowClass: "auxiliary" },
+      ),
+      {
+        type: "list",
+        content: [
+          pageUnit("3) Closed-loop control.", top, { type: "listitem" }),
+          {
+            type: "listitem",
+            content: [pageUnit("4) A nested paragraph.", top)],
+          },
+        ],
+      },
+      {
+        type: "list",
+        reference: true,
+        content: [pageUnit("A reference entry.", top, { type: "listitem" })],
+      },
+      {
+        type: "list",
+        flowClass: "excluded",
+        content: [pageUnit("Excluded text.", top, { type: "listitem" })],
+      },
+    ]),
+  );
+  assert.equal(recovered.length, 3);
+  assert(recovered[0].text.startsWith("2) Impact"));
+  assert.equal(recovered[1].text, "3) Closed-loop control.");
+  assert.equal(recovered[2].id, "2.1.0");
+});
+
+test("mixed nested list items retain inline text exactly once and inherit inline anchors", () => {
+  const inline = pageUnit("Outer list text.", bottom).content[0];
+  const recovered = extractParagraphs(
+    documentOf([
+      {
+        type: "list",
+        content: [
+          {
+            type: "listitem",
+            content: [
+              inline,
+              {
+                type: "list",
+                content: [
+                  pageUnit("Nested list text.", top, { type: "listitem" }),
+                ],
+              },
+            ],
+          },
+        ],
+      },
+    ]),
+  );
+  assert.deepEqual(
+    recovered.map((p) => p.text),
+    ["Outer list text.", "Nested list text."],
+  );
+  assert(recovered.every((p) => p.rects.length));
+});
+
+test("cross-page continuation skips table cells and captions, retaining two source ranges", () => {
+  const result = extractParagraphs(
+    documentOf([
+      pageUnit(prose, bottom),
+      floatingTable(),
+      pageUnit("IDQL. Similar trends hold for the remaining tasks.", top),
+      pageUnit("A separate discussion begins here.", [1, 50, 200, 290, 310]),
+    ]),
+  );
+  assert.equal(result.length, 3);
+  assert.equal(
+    result[0].text,
+    `${prose} IDQL. Similar trends hold for the remaining tasks.`,
+  );
+  assert.equal(result[0].rects.length, 2);
+  assert.deepEqual(
+    result[0].parts?.map((p) => p.id),
+    ["0", "2"],
+  );
+  assert.equal(result[1].kind, "caption");
+  assert.equal(result[2].text, "A separate discussion begins here.");
+});
+
+test("cross-column continuation joins a rescued numbered paragraph, not the next list item", () => {
+  const result = extractParagraphs(
+    documentOf([
+      pageUnit(`2) Distribution shift: ${prose} red`, [0, 50, 60, 290, 120], {
+        flowClass: "auxiliary",
+      }),
+      pageUnit(
+        "lines in Figure 1), with improvements on every task.",
+        [0, 320, 330, 560, 350],
+      ),
+      pageUnit(
+        "3) A different experiment begins here.",
+        [0, 320, 200, 560, 310],
+        { type: "listitem" },
+      ),
+    ]),
+  );
+  assert.equal(result.length, 2);
+  assert.equal(result[0].parts?.length, 2);
+  assert.equal(result[1].kind, "listitem");
+});
+
+test("ambiguous layout, completed sentences, new headings and numbered items are never inferred as continuations", () => {
+  const cases = [
+    [
+      pageUnit(prose + ".", bottom),
+      pageUnit("another paragraph starts here.", top),
+    ],
+    [
+      pageUnit(prose + ":", bottom),
+      pageUnit("another paragraph starts here.", top),
+    ],
+    [
+      pageUnit(prose, bottom),
+      pageUnit("IDQL. Independent indented paragraph.", top, {}, 10),
+    ],
+    [
+      pageUnit(prose, bottom),
+      pageUnit("2)New experiment without a space.", top),
+    ],
+    [pageUnit(prose, bottom), pageUnit("Fig. 3. Independent caption.", top)],
+    [
+      pageUnit(prose, bottom),
+      pageUnit("Methods", top, { type: "heading" }),
+      pageUnit("IDQL. Continuation-like text.", top),
+    ],
+    [
+      pageUnit(prose, bottom),
+      pageUnit("IDQL. Footnote.", top, { type: "note" }),
+    ],
+    [
+      pageUnit(prose, bottom),
+      node("IDQL. No line geometry.", { anchor: { pageRects: [top] } }),
+    ],
+    [
+      pageUnit(prose, bottom),
+      pageUnit("IDQL. Two pages later.", [2, 50, 330, 290, 350]),
+    ],
+    [
+      pageUnit(prose, bottom),
+      pageUnit("IDQL. Same column lower down.", [0, 320, 10, 560, 40]),
+    ],
+    [
+      pageUnit(prose, bottom, { nextPart: [7] }),
+      pageUnit("IDQL. Conflicting upstream link.", top),
+    ],
+    [
+      pageUnit(prose, bottom),
+      pageUnit("IDQL. Different layout width.", [1, 50, 330, 550, 350]),
+    ],
+  ];
+  for (const content of cases) {
+    assert(
+      extractParagraphs(documentOf(content)).every((p) => !p.parts),
+      JSON.stringify(content),
+    );
+  }
+});
+
+test("a layout boundary cannot skip another body block in the source or target column", () => {
+  for (const other of [
+    pageUnit("Body below source.", [0, 320, 20, 560, 50]),
+    pageUnit("Body above target.", [1, 50, 380, 290, 410]),
+    pageUnit("An unvisited right column.", [0, 590, 60, 830, 350]),
+  ]) {
+    const result = extractParagraphs(
+      documentOf([
+        pageUnit(prose, bottom),
+        pageUnit("IDQL. Continuation-like text.", top),
+        other,
+      ]),
+    );
+    assert(!result[0].parts);
+  }
+});
+
+test("explicit continuation links survive affiliations but cannot jump a heading or new numbered item", () => {
+  const first = pageUnit(prose, bottom, { nextPart: [2] });
+  const tail = pageUnit("IDQL. Same paragraph.", top, { previousPart: [0] });
+  assert.equal(
+    extractParagraphs(
+      documentOf([
+        first,
+        node("Affiliation", { flowClass: "auxiliary" }),
+        tail,
+      ]),
+    )[0].parts?.length,
+    2,
+  );
+  assert(
+    extractParagraphs(
+      documentOf([first, node("New section", { type: "heading" }), tail]),
+    ).every((p) => !p.parts),
+  );
+  assert(
+    extractParagraphs(
+      documentOf([
+        first,
+        node("Affiliation", { flowClass: "auxiliary" }),
+        { ...tail, text: "2) New numbered paragraph." },
+      ]),
+    ).every((p) => !p.parts),
+  );
+});
+
+const savedEntry = (source: string, result: string) => ({
+  source,
+  result,
+  service: "old-provider",
+  updatedAt: "2026-10-23T00:00:00Z",
+});
+const joinedFixture = () =>
+  extractParagraphs(
+    documentOf([
+      pageUnit(prose, bottom),
+      pageUnit("IDQL. Same paragraph.", top),
+    ]),
+  )[0];
+
+test("old fragment translations reappear in a single card with no provider calls or lost records", async () => {
+  const p = joinedFixture();
+  const old = {
+    ...blank(),
+    blocks: {
+      "0": savedEntry(prose, "原有前半段"),
+      "1": savedEntry("IDQL. Same paragraph.", "原有后半段"),
+    },
+  };
+  const before = JSON.stringify(old);
+  const aligned = alignTranslations(old, [p]);
+  assert.equal(aligned.blocks[p.id].result, "原有前半段\n原有后半段");
+  assert.equal(JSON.stringify(old), before);
+  assert.deepEqual(aligned.blocks["0"], old.blocks["0"]);
+  assert.deepEqual(aligned.blocks["1"], old.blocks["1"]);
+  const state = backend();
+  const job = new ParagraphTranslationJob([p], old, state.value);
+  await job.run();
+  assert.equal(job.completed, 1);
+  assert.equal(state.calls.length, 0);
+});
+
+test("partial merged paragraphs translate only missing text and preserve saved fragments through sync", async () => {
+  const p = joinedFixture();
+  for (const savedIndex of [0, 1]) {
+    const old = {
+      ...blank(),
+      blocks: {
+        [savedIndex]: savedEntry(p.parts![savedIndex].text, "保留译文"),
+      },
+    };
+    const state = backend();
+    const job = new ParagraphTranslationJob([p], old, state.value);
+    await job.run();
+    assert.deepEqual(state.calls, [p.parts![1 - savedIndex].text]);
+    assert.deepEqual(
+      job.file.blocks[String(savedIndex)],
+      old.blocks[savedIndex],
+    );
+    assert(job.get(p)?.result.includes("保留译文"));
+    assert.equal(job.completed, 1);
+    const merged = mergeTranslations(old, state.disk());
+    const resumed = new ParagraphTranslationJob([p], merged, backend().value);
+    assert.equal(resumed.completed, 1);
+  }
+});
+
+test("new merged paragraphs are sent as one coherent request; saved pre-upgrade joined text is reused", async () => {
+  const p = joinedFixture();
+  const state = backend();
+  const job = new ParagraphTranslationJob([p], blank(), state.value);
+  await job.run();
+  assert.deepEqual(state.calls, [p.text]);
+  const old = { ...blank(), blocks: { "0": savedEntry(p.text, "完整旧译文") } };
+  const reused = new ParagraphTranslationJob([p], old, backend().value);
+  assert.equal(reused.get(p)?.result, "完整旧译文");
+  assert.deepEqual(reused.file.blocks["0"], old.blocks["0"]);
+});
+
+test("cache ID collisions preserve the old source, and a failed merge save retains newly paid fragments", async () => {
+  const p = joinedFixture();
+  const old = {
+    ...blank(),
+    blocks: {
+      "0": savedEntry("Unrelated old text.", "无关旧译文"),
+      "1": savedEntry(p.parts![1].text, "原有后半段"),
+    },
+  };
+  const state = backend();
+  const save = state.value.save;
+  state.value.save = async (file) => {
+    if (file.blocks[p.id]) throw new Error("merge save failed");
+    return save(file);
+  };
+  const job = new ParagraphTranslationJob([p], old, state.value);
+  await assert.rejects(job.run(), /merge save failed/);
+  assert.deepEqual(state.calls, [prose]);
+  assert.deepEqual(state.disk().blocks["preserved:0"], old.blocks["0"]);
+  const retry = backend();
+  const resumed = new ParagraphTranslationJob([p], state.disk(), retry.value);
+  await resumed.run();
+  assert.equal(resumed.completed, 1);
+  assert.equal(retry.calls.length, 0);
+});
+
+test("a previously joined pair remains reusable when a third continuation is recovered", async () => {
+  const p: Paragraph = {
+    id: "joined:0+1+2",
+    kind: "paragraph",
+    rects: [rect],
+    text: "A multicolumn paragraph continues here.",
+    parts: [
+      { id: "0", text: "A multi-" },
+      { id: "1", text: "column paragraph" },
+      { id: "2", text: "continues here." },
+    ],
+  };
+  const old = {
+    ...blank(),
+    blocks: { "old-id": savedEntry("A multicolumn paragraph", "原有合并译文") },
+  };
+  const state = backend();
+  const job = new ParagraphTranslationJob([p], old, state.value);
+  await job.run();
+  assert.deepEqual(state.calls, ["continues here."]);
+  assert.deepEqual(job.file.blocks["old-id"], old.blocks["old-id"]);
+  assert.equal(job.get(p)?.result, "原有合并译文\n译：continues here.");
+});
+
+test("note writer and reader accept legacy, joined and preserved IDs with one shared grammar", () => {
+  for (const id of [
+    "0",
+    "12.3.4",
+    "joined:7+9",
+    "joined:62.1+63+64.0",
+    "preserved:0",
+    "preserved:12.3:2",
+    "preserved:joined:7+9",
+    "preserved:joined:7+9:2",
+  ]) {
+    assert(isTranslationBlockID(id), id);
+    assert(
+      encodeNotes(
+        { ...blank(), blocks: { [id]: savedEntry("source", "译文") } },
+        "ABCDEFGH",
+        "Paper",
+      ).length,
+    );
+  }
+  for (const id of [
+    0,
+    null,
+    "",
+    "__proto__",
+    "constructor",
+    "joined:7",
+    "joined:7+",
+    "joined:7++9",
+    "preserved:joined:7",
+    "0:2",
+    "0.1junk",
+    "0\n",
+    "<script>",
+  ]) {
+    assert(!isTranslationBlockID(id), String(id));
+    if (typeof id === "string")
+      assert.throws(
+        () =>
+          encodeNotes(
+            { ...blank(), blocks: { [id]: savedEntry("source", "译文") } },
+            "ABCDEFGH",
+            "Paper",
+          ),
+        /block ID/,
+      );
+  }
+});
+
+import { SerialTranslationQueue } from "../src/modules/fulltext/queue";
+const tickQueue = () => new Promise<void>((resolve) => setImmediate(resolve));
+
+test("multi-document queue admits a whole batch, deduplicates, and executes serially", async () => {
+  const started: number[] = [],
+    queued: number[] = [],
+    settled: number[] = [];
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const queue = new SerialTranslationQueue<number>(
+    (id) => id,
+    async (id) => {
+      started.push(id);
+      if (id === 1) await gate;
+      return "complete";
+    },
+    {
+      queued: (id) => queued.push(id),
+      cancelActive() {},
+      settled: (id) => settled.push(id),
+    },
+  );
+  assert.equal(queue.add([1, 1, 2, 3]), 3);
+  assert.deepEqual(queued, [1, 2, 3]);
+  assert.deepEqual(started, []);
+  await tickQueue();
+  assert.deepEqual(started, [1]);
+  assert.equal(queue.add([1, 2, 4]), 1);
+  release();
+  await tickQueue();
+  assert.deepEqual(started, [1, 2, 3, 4]);
+  assert.deepEqual(settled, [1, 2, 3, 4]);
+  assert(!queue.has(1));
+});
+
+test("queued pause removes unstarted work; active pause finishes the in-flight task before advancing", async () => {
+  const started: number[] = [],
+    interrupted: number[] = [],
+    states: string[] = [];
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const queue = new SerialTranslationQueue<number>(
+    (id) => id,
+    async (id, cancelled) => {
+      started.push(id);
+      if (id === 1) await gate;
+      return cancelled() ? "paused" : "complete";
+    },
+    {
+      queued() {},
+      cancelActive: (id) => interrupted.push(id),
+      settled: (id, state) => states.push(`${id}:${state}`),
+    },
+  );
+  queue.add([1, 2, 3]);
+  await tickQueue();
+  queue.cancel(2);
+  queue.cancel(1);
+  assert(!queue.has(2));
+  assert(queue.has(1));
+  assert.deepEqual(interrupted, [1]);
+  assert.deepEqual(started, [1]);
+  release();
+  await tickQueue();
+  assert.deepEqual(started, [1, 3]);
+  assert.deepEqual(states, ["2:paused", "1:paused", "3:complete"]);
+});
+
+test("queue failures keep later documents runnable and shutdown does not start pending tasks", async () => {
+  const completed: string[] = [];
+  const queue = new SerialTranslationQueue<number>(
+    (id) => id,
+    async (id) => {
+      if (id === 1) throw new Error("provider unavailable");
+      return "complete";
+    },
+    {
+      queued() {},
+      cancelActive() {},
+      settled: (id, state, error) =>
+        completed.push(`${id}:${state}:${error ? String(error) : ""}`),
+    },
+  );
+  queue.add([1, 2]);
+  await tickQueue();
+  assert.match(completed[0], /1:failed:Error: provider unavailable/);
+  assert.equal(completed[1], "2:complete:");
+  queue.add([3, 4]);
+  queue.close();
+  await tickQueue();
+  assert.deepEqual(completed.slice(2), ["3:paused:", "4:paused:"]);
+  assert.equal(queue.add([5]), 0);
+});
+
+test("queued progress survives aggregation and active work takes priority over waiting PDFs", () => {
+  assert.equal(
+    aggregateProgress([{ done: 0, total: 0, state: "queued" }])?.state,
+    "queued",
+  );
+  assert.equal(
+    aggregateProgress([
+      { done: 0, total: 0, state: "queued" },
+      { done: 2, total: 10, state: "translating" },
+    ])?.state,
+    "translating",
+  );
+  assert.equal(
+    aggregateProgress([
+      { done: 2, total: 10, state: "failed", detail: "provider unavailable" },
+    ])?.detail,
+    "provider unavailable",
+  );
 });

@@ -256,3 +256,6 @@ fulltext-task-complete = Complete
 fulltext-already-translated = All paragraphs are already translated. Saved translations are enabled.
 fulltext-resuming = Resuming saved translation: { $done } / { $total } paragraphs.
 fulltext-starting = Starting translation: 0 / { $total } paragraphs.
+
+fulltext-task-queued = Queued
+fulltext-queue-unavailable = This PDF was deleted or its library is not editable.

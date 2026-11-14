@@ -256,3 +256,6 @@ fulltext-task-complete = 已完成
 fulltext-already-translated = 全文已翻译，已启用保存的译文，无需重新翻译。
 fulltext-resuming = 继续已有译文：已保存 { $done } / { $total } 段。
 fulltext-starting = 开始翻译：0 / { $total } 段。
+
+fulltext-task-queued = 排队中
+fulltext-queue-unavailable = 此 PDF 已被删除，或所在文献库不可编辑。

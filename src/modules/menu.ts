@@ -4,7 +4,7 @@ import {
   canTranslateFullText,
   hasFullTextJob,
   pauseFullTextTranslation,
-  startFullTextTranslation,
+  enqueueFullTextTranslations,
 } from "./fulltext";
 import {
   addTranslateAbstractTask,
@@ -25,15 +25,14 @@ export function registerMenu() {
         l10nID: `${config.addonRef}-itemmenu-translateFullText`,
         icon: menuIcon,
         onCommand: (_event, context) => {
-          if (context.items?.length === 1)
-            void startFullTextTranslation(context.items[0]);
+          if (context.items?.length)
+            void enqueueFullTextTranslations(context.items);
         },
         onShowing: (_event, context) => {
-          const item =
-            context.items?.length === 1 ? context.items[0] : undefined;
-          context.setVisible(!!item && canTranslateFullText(item));
+          const items = (context.items || []).filter(canTranslateFullText);
+          context.setVisible(items.length > 0);
           context.setEnabled(
-            !!item && item.isEditable() && !hasFullTextJob(item),
+            items.some((item) => item.isEditable() && !hasFullTextJob(item)),
           );
         },
       },
@@ -41,13 +40,11 @@ export function registerMenu() {
         menuType: "menuitem",
         l10nID: `${config.addonRef}-itemmenu-pauseFullText`,
         onCommand: (_event, context) => {
-          if (context.items?.length === 1)
-            void pauseFullTextTranslation(context.items[0]);
+          for (const item of context.items || [])
+            void pauseFullTextTranslation(item);
         },
         onShowing: (_event, context) => {
-          context.setVisible(
-            context.items?.length === 1 && hasFullTextJob(context.items[0]),
-          );
+          context.setVisible(!!context.items?.some(hasFullTextJob));
         },
       },
       {

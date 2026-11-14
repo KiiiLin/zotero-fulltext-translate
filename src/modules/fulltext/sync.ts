@@ -62,6 +62,17 @@ function pieceHTML(piece: Piece) {
   return `<h2><a href="${href(BLOCK_LINK, metadata)}">${escape(piece.id)} · ${piece.index + 1}/${piece.count}</a></h2><blockquote><pre><code>${escape(source)}</code></pre></blockquote><pre><code>${escape(result)}</code></pre>`;
 }
 
+// Keep writer and reader on the same ID grammar. Version 2.4.12 introduced
+// joined chains and preserved cache entries without changing the v1 note layout.
+const nodePath = String.raw`\d+(?:\.\d+)*`;
+const currentBlockID = `(?:${nodePath}|joined:${nodePath}(?:\\+${nodePath})+)`;
+const blockIDPattern = new RegExp(
+  `^(?:${currentBlockID}|preserved:${currentBlockID}(?::\\d+)?)$`,
+);
+export function isTranslationBlockID(id: unknown): id is string {
+  return typeof id === "string" && id.trim() === id && blockIDPattern.test(id);
+}
+
 export function encodeNotes(
   file: TranslationFile,
   attachmentKey: string,
@@ -69,6 +80,8 @@ export function encodeNotes(
 ): string[] {
   const pieces: Piece[] = [];
   for (const [id, entry] of Object.entries(file.blocks)) {
+    if (!isTranslationBlockID(id))
+      throw new Error("Invalid paragraph translation block ID");
     const sources = split(entry.source),
       results = split(entry.result);
     const count = Math.max(sources.length, results.length);
@@ -141,7 +154,7 @@ export function decodeNote(
     const result = source?.nextElementSibling;
     if (
       !piece ||
-      !/^\d+(?:\.\d+)*$/.test(piece.id) ||
+      !isTranslationBlockID(piece.id) ||
       typeof piece.service !== "string" ||
       typeof piece.updatedAt !== "string" ||
       !Number.isInteger(piece.index) ||

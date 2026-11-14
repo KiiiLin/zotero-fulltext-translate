@@ -4,7 +4,7 @@ export interface SDTNode {
   type?: string;
   text?: string;
   content?: SDTNode[];
-  anchor?: { pageRects?: PageRect[] };
+  anchor?: { pageRects?: PageRect[]; textMap?: string };
   previousPart?: number[];
   nextPart?: number[];
   flowClass?: string;
@@ -20,6 +20,8 @@ export interface Paragraph {
   kind: string;
   text: string;
   rects: PageRect[];
+  /** Original extraction units, retained for lossless cache migration. */
+  parts?: { id: string; text: string }[];
 }
 export interface SavedTranslation {
   source: string;
@@ -49,29 +51,114 @@ export function sameTranslationLanguage(left: string, right: string): boolean {
   return !!code && code === normalize(right);
 }
 
-/** A new SDT extraction can move node IDs; reuse only matching source text. */
+const normalizedSource = (text: string) => text.replace(/\s+/g, " ").trim();
+
+/** Match text as well as ID; extraction IDs can change after a Zotero update. */
+export function savedFor(
+  file: TranslationFile,
+  part: { id: string; text: string },
+): SavedTranslation | undefined {
+  const source = normalizedSource(part.text);
+  const direct = file.blocks[part.id];
+  if (direct && normalizedSource(direct.source) === source) return direct;
+  return Object.values(file.blocks)
+    .filter((entry) => normalizedSource(entry.source) === source)
+    .sort((a, b) =>
+      `${b.updatedAt}\0${b.result}`.localeCompare(
+        `${a.updatedAt}\0${a.result}`,
+      ),
+    )[0];
+}
+
+/** Never discard an old translation when an extraction reuses its node ID. */
+export function saveTranslation(
+  file: TranslationFile,
+  id: string,
+  entry: SavedTranslation,
+): TranslationFile {
+  const blocks = { ...file.blocks };
+  const old = blocks[id];
+  if (old && normalizedSource(old.source) !== normalizedSource(entry.source)) {
+    let key = `preserved:${id}`;
+    let suffix = 0;
+    while (blocks[key] && blocks[key].source !== old.source)
+      key = `preserved:${id}:${++suffix}`;
+    blocks[key] = old;
+  }
+  blocks[id] = entry;
+  return { ...file, blocks };
+}
+
+/** Shared joining rule for extraction and matching older multi-part cache entries. */
+export function joinParagraphText(left: string, right: string): string {
+  return left.endsWith("-") && /^[a-z]/.test(right)
+    ? left.slice(0, -1) + right
+    : left + (left && right ? " " : "") + right;
+}
+
+/** Older versions may already have saved a subset of a newly extended chain. */
+export function translationUnits(file: TranslationFile, paragraph: Paragraph) {
+  const parts = paragraph.parts || [{ id: paragraph.id, text: paragraph.text }];
+  const units: { id: string; text: string }[] = [];
+  for (let start = 0; start < parts.length; ) {
+    let unit = parts[start];
+    let end = start + 1;
+    let text = "";
+    for (let i = start; i < parts.length; i++) {
+      text = joinParagraphText(text, parts[i].text);
+      const candidate = {
+        id:
+          i === start
+            ? parts[start].id
+            : `joined:${parts
+                .slice(start, i + 1)
+                .map((p) => p.id)
+                .join("+")}`,
+        text,
+      };
+      if (savedFor(file, candidate)) {
+        unit = candidate;
+        end = i + 1;
+      }
+    }
+    units.push(unit);
+    start = end;
+  }
+  return units;
+}
+
+/** Reuse unchanged text and compose saved fragments without retranslating them. */
 export function alignTranslations(
   file: TranslationFile,
   paragraphs: Paragraph[],
 ): TranslationFile {
-  const normalize = (text: string) => text.replace(/\s+/g, " ").trim();
-  const bySource = new Map<string, SavedTranslation>();
-  for (const entry of Object.values(file.blocks)) {
-    const key = normalize(entry.source);
-    const old = bySource.get(key);
-    if (
-      !old ||
-      `${entry.updatedAt}\0${entry.result}` > `${old.updatedAt}\0${old.result}`
-    )
-      bySource.set(key, entry);
-  }
-  const blocks = { ...file.blocks };
+  let aligned = file;
   for (const paragraph of paragraphs) {
-    if (blocks[paragraph.id]?.source === paragraph.text) continue;
-    const entry = bySource.get(normalize(paragraph.text));
-    if (entry) blocks[paragraph.id] = { ...entry, source: paragraph.text };
+    if (aligned.blocks[paragraph.id]?.source === paragraph.text) continue;
+    let entry = savedFor(aligned, paragraph);
+    if (!entry && paragraph.parts?.length) {
+      const parts = translationUnits(aligned, paragraph).map((part) =>
+        savedFor(aligned, part),
+      );
+      if (parts.every((part): part is SavedTranslation => !!part)) {
+        entry = {
+          source: paragraph.text,
+          result: parts.map((part) => part.result).join("\n"),
+          service: [...new Set(parts.map((part) => part.service))].join(" / "),
+          updatedAt: parts
+            .map((part) => part.updatedAt)
+            .sort()
+            .at(-1)!,
+        };
+      }
+    }
+    if (entry)
+      aligned = saveTranslation(aligned, paragraph.id, {
+        ...entry,
+        source: paragraph.text,
+      });
   }
-  return { ...file, blocks };
+  return aligned;
 }
 
 export function isPageRect(rect: unknown): rect is PageRect {
@@ -86,68 +173,7 @@ export function isPageRect(rect: unknown): rect is PageRect {
   );
 }
 
-function textOf(node: SDTNode): string {
-  return typeof node.text === "string"
-    ? node.text
-    : (node.content || []).map(textOf).join("");
-}
-
-export function extractParagraphs(document: SDTDocument): Paragraph[] {
-  const nodes = new Map<string, SDTNode>();
-  const visit = (children: SDTNode[], parent: number[] = []) => {
-    children.forEach((node, index) => {
-      const path = [...parent, index];
-      // Excluded containers must not leak their descendants into translation.
-      if (node.flowClass === "excluded") return;
-      if (
-        ["paragraph", "caption", "heading", "note"].includes(node.type || "")
-      ) {
-        if (
-          !node.reference &&
-          (node.flowClass !== "auxiliary" || node.type === "caption")
-        ) {
-          nodes.set(path.join("."), node);
-        }
-      } else if (node.content) visit(node.content, path);
-    });
-  };
-  visit(document.content);
-  const consumed = new Set<string>();
-  const result: Paragraph[] = [];
-  for (const [initialKey] of nodes) {
-    if (consumed.has(initialKey)) continue;
-    let key = initialKey;
-    const ancestors = new Set<string>();
-    while (!ancestors.has(key)) {
-      ancestors.add(key);
-      const previous = nodes.get(key)?.previousPart?.join(".");
-      if (!previous || !nodes.has(previous) || consumed.has(previous)) break;
-      key = previous;
-    }
-    const id = key;
-    const first = nodes.get(key)!;
-    let text = "";
-    const rects: PageRect[] = [];
-    while (nodes.has(key) && !consumed.has(key)) {
-      const node = nodes.get(key)!;
-      if (node.type !== first.type) break;
-      consumed.add(key);
-      const part = textOf(node)
-        .replace(/\u00ad/g, "")
-        .trim();
-      if (text.endsWith("-") && /^[a-z]/.test(part))
-        text = text.slice(0, -1) + part;
-      else text += (text && part ? " " : "") + part;
-      rects.push(...(node.anchor?.pageRects || []).filter(isPageRect));
-      const next = node.nextPart?.join(".");
-      if (!next) break;
-      key = next;
-    }
-    if (text && rects.length)
-      result.push({ id, kind: first.type!, text, rects });
-  }
-  return result;
-}
+export { extractParagraphs } from "./paragraphs";
 
 /** Split within a provider's request limit without losing any source characters. */
 export function splitTranslationText(text: string, limit: number): string[] {

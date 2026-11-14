@@ -4,7 +4,9 @@ import { getString } from "../../utils/locale";
 export interface TranslationProgress {
   done: number;
   total: number;
+  detail?: string;
   state:
+    | "queued"
     | "checking"
     | "translating"
     | "pausing"
@@ -13,6 +15,8 @@ export interface TranslationProgress {
     | "complete";
 }
 const progress = new Map<number, TranslationProgress>();
+// User pauses and task failures must survive unrelated note notifications.
+const taskStates = new Set<number>();
 let columnKey: string | false = false;
 let active = false;
 let generation = 0;
@@ -25,7 +29,8 @@ const requested = new Set<number>();
 const epochs = new Map<number, number>();
 const queue: { item: Zotero.Item; generation: number; epoch: number }[] = [];
 const isRunning = (value?: TranslationProgress) =>
-  !!value && ["checking", "translating", "pausing"].includes(value.state);
+  !!value &&
+  ["queued", "checking", "translating", "pausing"].includes(value.state);
 
 function redraw(ids: number[]) {
   for (const win of Zotero.getMainWindows()) {
@@ -76,14 +81,23 @@ async function drain() {
 function requestSaved(item: Zotero.Item) {
   if (!item.isPDFAttachment() || item.deleted) return;
   requested.add(item.id);
-  if (checked.has(item.id) || isRunning(progress.get(item.id))) return;
+  if (
+    checked.has(item.id) ||
+    taskStates.has(item.id) ||
+    isRunning(progress.get(item.id))
+  )
+    return;
   checked.add(item.id);
   queue.push({ item, generation, epoch: epochs.get(item.id) || 0 });
   void drain();
 }
 
 /** Re-read displayed rows after notes arrive, disappear, or the target language changes. */
-export function invalidateSavedProgress() {
+export function invalidateSavedProgress(clearTaskStates = false) {
+  if (clearTaskStates) {
+    for (const id of taskStates) progress.delete(id);
+    taskStates.clear();
+  }
   generation++;
   checked.clear();
   queue.length = 0;
@@ -99,10 +113,19 @@ export function aggregateProgress(
   values: TranslationProgress[],
 ): TranslationProgress | undefined {
   if (!values.length) return;
-  const active = values.find((v) =>
-    ["checking", "translating", "pausing"].includes(v.state),
-  );
+  const active =
+    values.find((v) =>
+      ["checking", "translating", "pausing"].includes(v.state),
+    ) || values.find((v) => v.state === "queued");
   return {
+    ...(values.some((v) => v.detail)
+      ? {
+          detail: values
+            .filter((v) => v.detail)
+            .map((v) => v.detail)
+            .join("\n"),
+        }
+      : {}),
     done: values.reduce((sum, v) => sum + v.done, 0),
     total: values.reduce((sum, v) => sum + v.total, 0),
     state:
@@ -115,11 +138,17 @@ export function aggregateProgress(
   };
 }
 
+export function getTranslationProgress(itemID: number) {
+  return progress.get(itemID);
+}
+
 export function setTranslationProgress(
   item: Zotero.Item,
   value: TranslationProgress,
 ) {
   if (!active) return;
+  if (["paused", "failed"].includes(value.state)) taskStates.add(item.id);
+  else taskStates.delete(item.id);
   if (JSON.stringify(progress.get(item.id)) === JSON.stringify(value)) return;
   progress.set(item.id, value);
   epochs.set(item.id, (epochs.get(item.id) || 0) + 1);
@@ -165,6 +194,7 @@ export function registerProgressColumn(
       cell.title = value.total
         ? `${state} · ${value.done}/${value.total} · ${percent}%`
         : state;
+      if (value.detail) cell.title += `\n${value.detail}`;
       cell.style.cssText =
         "display:flex;align-items:center;gap:6px;min-width:0;";
       if (value.state === "complete") {
@@ -179,6 +209,20 @@ export function registerProgressColumn(
         svg.innerHTML =
           '<circle cx="10" cy="10" r="8" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="m6 10 2.5 2.5L14 7" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>';
         cell.append(svg);
+        return cell;
+      }
+      if (value.state === "queued") {
+        const track = doc.createElement("span");
+        track.className = "fulltext-library-queued";
+        track.setAttribute("role", "status");
+        track.setAttribute("aria-label", cell.title);
+        track.style.cssText =
+          "height:8px;min-width:24px;max-width:84px;flex:1 1 48px;border-radius:4px;background:repeating-linear-gradient(135deg,#dca925 0px,#dca925 6px,#f0ce65 6px,#f0ce65 12px);";
+        const text = doc.createElement("span");
+        text.textContent = state;
+        text.style.cssText =
+          "font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;";
+        cell.append(track, text);
         return cell;
       }
       const bar = doc.createElement("progress");
@@ -197,7 +241,11 @@ export function registerProgressColumn(
             : "#2476d4";
       const text = doc.createElement("span");
       text.style.cssText = "white-space:nowrap;flex-shrink:0;font-size:11px;";
-      text.textContent = value.total ? `${value.done}/${value.total}` : state;
+      text.textContent = ["failed", "paused", "pausing"].includes(value.state)
+        ? state
+        : value.total
+          ? `${value.done}/${value.total}`
+          : state;
       if (!value.total)
         text.style.cssText +=
           "flex-shrink:1;overflow:hidden;text-overflow:ellipsis;";
@@ -218,4 +266,5 @@ export function unregisterProgressColumn() {
   if (columnKey) Zotero.ItemTreeManager.unregisterColumn(columnKey);
   columnKey = false;
   progress.clear();
+  taskStates.clear();
 }

@@ -1,4 +1,8 @@
 import {
+  alignTranslations,
+  savedFor,
+  saveTranslation,
+  translationUnits,
   Paragraph,
   SavedTranslation,
   splitTranslationText,
@@ -26,7 +30,9 @@ export class ParagraphTranslationJob {
     public file: TranslationFile,
     private backend: TranslationBackend,
     private chunkSize = 3000,
-  ) {}
+  ) {
+    this.file = alignTranslations(file, paragraphs);
+  }
 
   get completed() {
     return this.paragraphs.filter((p) => this.get(p)).length;
@@ -55,32 +61,44 @@ export class ParagraphTranslationJob {
           throw new Error(
             "Translation settings changed. Reopen full-text translation to continue.",
           );
-        const translated: string[] = [];
-        let service = "";
-        for (const part of splitTranslationText(
-          paragraph.text,
-          this.chunkSize,
-        )) {
-          // Complete an in-flight paragraph before pausing, so its paid result is saved.
-          const response = await this.backend.translate(part);
-          if (!response.result.trim())
-            throw new Error("Translation returned empty text");
-          translated.push(response.result);
-          service = response.service;
-          await this.backend.delay();
+        this.file = alignTranslations(this.file, [paragraph]);
+        if (this.get(paragraph)) return;
+        // New paragraphs are translated as a whole. If fragments were already
+        // paid for, retain them verbatim and translate only the missing units.
+        const fragments = translationUnits(this.file, paragraph);
+        const units = fragments.some((part) => savedFor(this.file, part))
+          ? fragments
+          : [{ id: paragraph.id, text: paragraph.text }];
+        for (const unit of units) {
+          if (savedFor(this.file, unit)) continue;
+          if (!(await this.backend.isCurrent()))
+            throw new Error(
+              "Translation settings changed. Reopen full-text translation to continue.",
+            );
+          const translated: string[] = [];
+          let service = "";
+          for (const part of splitTranslationText(unit.text, this.chunkSize)) {
+            const response = await this.backend.translate(part);
+            if (!response.result.trim())
+              throw new Error("Translation returned empty text");
+            translated.push(response.result);
+            service = response.service;
+            await this.backend.delay();
+          }
+          const entry: SavedTranslation = {
+            source: unit.text,
+            result: translated.join("\n"),
+            service,
+            updatedAt: new Date().toISOString(),
+          };
+          // Save each newly paid fragment before continuing, so retries never
+          // discard or charge again for fragments saved before a failure.
+          const next = saveTranslation(this.file, unit.id, entry);
+          this.file = (await this.backend.save(next)) || next;
         }
-        const entry: SavedTranslation = {
-          source: paragraph.text,
-          result: translated.join("\n"),
-          service,
-          updatedAt: new Date().toISOString(),
-        };
-        // Publish success only after the atomic disk write has succeeded.
-        const next: TranslationFile = {
-          ...this.file,
-          blocks: { ...this.file.blocks, [paragraph.id]: entry },
-        };
-        this.file = (await this.backend.save(next)) || next;
+        const aligned = alignTranslations(this.file, [paragraph]);
+        if (aligned !== this.file)
+          this.file = (await this.backend.save(aligned)) || aligned;
       } catch (error) {
         this.errors.set(paragraph.id, String(error));
         throw error;
